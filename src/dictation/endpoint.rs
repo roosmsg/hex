@@ -169,7 +169,8 @@ mod tests {
         assert!(check_url("https://example.com/hook").is_ok());
         assert!(check_url("ftp://127.0.0.1/x").is_err());
         assert!(check_url("127.0.0.1:1234").is_err());
-        assert!(check_url("http:///nohost").is_err());
+        assert!(check_url("http://").is_err(), "no host at all");
+        assert!(check_url("mailto:x@example.com").is_err());
     }
 
     #[test]
