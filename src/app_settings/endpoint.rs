@@ -16,7 +16,7 @@ pub const MAX_ENDPOINTS: usize = 10;
 #[serde(default)]
 pub struct EndpointSettings {
     /// Said first, it sends the rest of the dictation here: "Restage, open
-    /// research". Without one, the endpoint receives nothing.
+    /// portfolio". Without one, the endpoint receives nothing.
     pub name: String,
     /// The http(s) URL that takes the POST.
     pub url: Option<String>,

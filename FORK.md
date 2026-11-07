@@ -19,7 +19,7 @@ with an endpoint's **name**, the rest of the dictation is sent as JSON to
 that endpoint with an HTTP POST, after Hex's own Output steps (corrections,
 transformations):
 
-- "Restage, open research" sends `open research` to the endpoint named
+- "Restage, open portfolio" sends `open portfolio` to the endpoint named
   *Restage*.
 - A dictation that starts with no endpoint's name pastes as usual, so normal
   dictation keeps working with the lab on.
@@ -81,7 +81,7 @@ Restage's local API takes spoken commands at `POST /command`.
    the token.
 2. Name the endpoint `Restage`, paste the URL and the token, and leave the
    body as it is: `{"text": "{text}"}` is what Restage expects.
-3. Dictate "Restage, open research", and Restage starts that workspace.
+3. Dictate "Restage, open portfolio", and Restage starts that workspace.
 
 The URL and token stay the same when Restage restarts.
 

@@ -373,7 +373,7 @@ worker (`process_dictation_job` in
 [windows/dictation.rs](../../src/windows/dictation.rs)) routes each finished
 dictation, once the Output steps have run, by `dictation::endpoint::route`:
 a dictation that starts with an endpoint's name goes to that endpoint
-without the name ("Restage, open research" sends "open research"); the
+without the name ("Restage, open portfolio" sends "open portfolio"); the
 longest matching name wins, and a name matches however speech splits or
 punctuates it ("Re-stage", "re stage"). Any other dictation pastes as usual,
 and an endpoint without a name receives nothing. `endpoints` is a list (at

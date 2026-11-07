@@ -666,7 +666,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("System instructions for rewriting dictation in this mode", "Системные инструкции для переписывания диктовки в этом режиме"),
     ("Terminal paste", "Вставка в терминал"),
     ("Send to endpoint", "Отправлять на конечную точку"),
-    ("Start with an endpoint's name to send it the rest: \"Restage, open research\"", "Начните с названия конечной точки, чтобы отправить ей остальное: \"Restage, open research\""),
+    ("Start with an endpoint's name to send it the rest: \"Restage, open portfolio\"", "Начните с названия конечной точки, чтобы отправить ей остальное: \"Restage, open portfolio\""),
     ("Endpoint URL", "URL конечной точки"),
     ("Bearer token", "Токен bearer"),
     ("JSON body", "Тело JSON"),

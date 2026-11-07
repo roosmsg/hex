@@ -719,7 +719,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
             Feature::SendToEndpoint,
             Some(&GLOBE),
             tr("Send to endpoint"),
-            tr("Start with an endpoint's name to send it the rest: \"Restage, open research\""),
+            tr("Start with an endpoint's name to send it the rest: \"Restage, open portfolio\""),
         ));
     }
     #[cfg(hex_capture)]

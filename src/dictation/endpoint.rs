@@ -1,6 +1,6 @@
 //! Labs › Send to endpoint: a dictation that starts with an endpoint's name
 //! goes to that local HTTP endpoint as JSON, without the name, for apps that
-//! take spoken commands ("Restage, open research"). Any other dictation
+//! take spoken commands ("Restage, open portfolio"). Any other dictation
 //! pastes as usual. `labs.send_to_endpoint` and `endpoints`; Windows.
 //!
 //! Gated where the work starts: [`from_settings`] is empty while the lab is
@@ -131,7 +131,7 @@ impl Endpoint {
 /// longest endpoint name it starts with. `None`: paste as usual.
 ///
 /// A name matches however speech splits or punctuates it: "Re-stage, open
-/// research" and "re stage open research" both start with "Restage".
+/// portfolio" and "re stage open portfolio" both start with "Restage".
 pub fn route<'a>(endpoints: &'a [Endpoint], text: &str) -> Option<(&'a Endpoint, String)> {
     let words = words(text);
     let mut best: Option<(&Endpoint, usize)> = None;
@@ -339,9 +339,9 @@ mod tests {
     #[test]
     fn a_name_sends_the_rest_to_its_endpoint() {
         let endpoints = [endpoint("Restage"), endpoint("Lights")];
-        let (to, rest) = route(&endpoints, "Restage, open research.").unwrap();
+        let (to, rest) = route(&endpoints, "Restage, open portfolio.").unwrap();
         assert_eq!(to.name, "Restage");
-        assert_eq!(rest, "open research.");
+        assert_eq!(rest, "open portfolio.");
         let (to, rest) = route(&endpoints, "lights: dim to 30%").unwrap();
         assert_eq!(to.name, "Lights");
         assert_eq!(rest, "dim to 30%");
@@ -351,14 +351,14 @@ mod tests {
     fn a_name_matches_however_speech_splits_it() {
         let endpoints = [endpoint("Restage")];
         for spoken in [
-            "re stage open research",
-            "Re-stage open research",
-            "RESTAGE — open research",
-            "Réstage open research",
+            "re stage open portfolio",
+            "Re-stage open portfolio",
+            "RESTAGE — open portfolio",
+            "Réstage open portfolio",
         ] {
             let (_, rest) =
                 route(&endpoints, spoken).unwrap_or_else(|| panic!("{spoken:?} went nowhere"));
-            assert_eq!(rest, "open research", "{spoken:?}");
+            assert_eq!(rest, "open portfolio", "{spoken:?}");
         }
     }
 

@@ -673,7 +673,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("System instructions for rewriting dictation in this mode", "Instruções de sistema para reescrever o ditado neste modo"),
     ("Terminal paste", "Colar no terminal"),
     ("Send to endpoint", "Enviar ao endpoint"),
-    ("Start with an endpoint's name to send it the rest: \"Restage, open research\"", "Comece pelo nome de um endpoint para lhe enviar o resto: \"Restage, open research\""),
+    ("Start with an endpoint's name to send it the rest: \"Restage, open portfolio\"", "Comece pelo nome de um endpoint para lhe enviar o resto: \"Restage, open portfolio\""),
     ("Endpoint URL", "URL do endpoint"),
     ("Bearer token", "Token bearer"),
     ("JSON body", "Corpo JSON"),
