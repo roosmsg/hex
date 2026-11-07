@@ -737,6 +737,8 @@ pub(crate) struct Ui {
 struct Drafts {
     modes: bool,
     vocabulary: bool,
+    /// Labs › Send to endpoint's fields.
+    endpoint: bool,
 }
 
 impl Ui {
@@ -791,6 +793,7 @@ impl Ui {
     fn with(settings: AppSettings, service: Service) -> Self {
         let modes = modes::ModesPane::new(&settings);
         let vocabulary = vocabulary::VocabularyEditor::new(&settings.vocabulary);
+        let lab_store = labs::Store::new(&settings);
         Self {
             settings,
             service,
@@ -809,7 +812,7 @@ impl Ui {
             general_search: TextEdit::default(),
             advanced: Vec::new(),
             labs_open: false,
-            lab_store: labs::Store::default(),
+            lab_store,
             build_preview: None,
             capture: Capture::Idle,
             vocabulary,
@@ -901,6 +904,7 @@ impl Ui {
         let mut candidate = self.settings.clone();
         self.modes.project(&mut candidate);
         candidate.vocabulary = self.vocabulary.project();
+        self.lab_store.endpoint.project(&mut candidate);
         candidate
     }
 
@@ -909,9 +913,12 @@ impl Ui {
         let settings = &self.settings;
         let mut modes = settings.clone();
         self.modes.project(&mut modes);
+        let mut endpoint = settings.clone();
+        self.lab_store.endpoint.project(&mut endpoint);
         Drafts {
             modes: modes.dictation_processing != settings.dictation_processing,
             vocabulary: self.vocabulary.project() != settings.vocabulary,
+            endpoint: endpoint.endpoint != settings.endpoint,
         }
     }
 
@@ -1085,6 +1092,9 @@ impl Ui {
             }
             if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
                 self.vocabulary.reload(&service.vocabulary);
+            }
+            if !drafts.endpoint && service.endpoint != self.settings.endpoint {
+                self.lab_store.endpoint.reload(&service.endpoint);
             }
             self.settings = service.clone();
             self.settings_changed();

@@ -18,6 +18,7 @@ use crate::transcription::models::{TranscriptionModelId, TranscriptionSelection}
 #[cfg(hex_capture)]
 mod capture;
 mod dictation_processing;
+mod endpoint;
 mod hotkeys;
 mod labs;
 mod meeting_folder;
@@ -34,6 +35,7 @@ pub use capture::*;
 pub use dictation_processing::{
     DictationMode, DictationPostProcessing, DictationProcessingSettings,
 };
+pub use endpoint::*;
 pub use hotkeys::*;
 pub use labs::*;
 pub use meeting_folder::default_meeting_output_folder;
@@ -306,6 +308,8 @@ pub struct AppSettings {
     pub experimental: ExperimentalSettings,
     /// The Labs features' own switches (`crate::labs`).
     pub labs: LabsSettings,
+    /// Labs › Send to endpoint's URL, token, body, and paste (Windows).
+    pub endpoint: EndpointSettings,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -432,6 +436,7 @@ impl Default for AppSettings {
             capture_from_other_build: None,
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
+            endpoint: EndpointSettings::default(),
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,

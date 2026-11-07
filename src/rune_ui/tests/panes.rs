@@ -424,6 +424,7 @@ fn contributed_options_are_labs_toggles_off_by_default() {
     tap(&mut rt, "lab-filler-words");
     assert!(rt.state.settings.labs.filler_words);
     assert!(rt.find("lab-share-shortcut").is_none(), "Windows only");
+    assert!(rt.find("lab-send-to-endpoint").is_none(), "Windows only");
     assert!(!rt.state.settings.labs.mouse_shortcuts);
     tap(&mut rt, "lab-mouse-shortcuts");
     assert!(rt.state.settings.labs.mouse_shortcuts);

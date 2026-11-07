@@ -36,6 +36,8 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Mouse shortcuts no    labs.mouse_shortcuts         (macOS)   mouse buttons record as shortcuts (#209)
 ├── Also pause the browser no pause_browser_media      (macOS)   pause a playing tab too, with Pause media (#301); General shows its permission row
 ├── Share dictation shortcut no share_dictation_shortcut (Windows) apps such as Discord see the shortcut too (#176)
+├── Send to endpoint no    labs.send_to_endpoint + endpoint.url/token/body/paste (Windows)
+│                                        each dictation is POSTed as JSON to a local HTTP endpoint instead of pasted (or beside the paste); for apps that take spoken commands
 ├── Unload model when idle no labs.unload_idle + labs.unload_idle_minutes (5/15/30/60, default 15)
 │                                        the engine frees the speech model after that long unused (#442)
 ├── Restore shortcut default no labs.restore_shortcut_default   Paste last dictation's row offers its default back (#613)
@@ -365,6 +367,29 @@ exactly as before. Checks: the tests in
 [panes.rs](../../src/rune_ui/tests/panes.rs). Not yet observed: a real
 dictation with the toggle on; the Labs page goldens need regenerating on
 Linux with the new row.
+
+Send to endpoint (`send-to-endpoint`, Windows): while on with `endpoint.url`
+set, the Windows output worker (`process_dictation_job` in
+[windows/dictation.rs](../../src/windows/dictation.rs)) POSTs each finished
+dictation to that URL as JSON once the Output steps have run, with
+`endpoint.token` as a bearer token and `endpoint.body` as the body, where
+`{text}` stands for the dictation escaped for a JSON string (the default body
+is `{"text": "{text}"}`). The paste is skipped unless `endpoint.paste` is on;
+a send that fails with no paste fails the dictation, so the HUD says so
+rather than dropping the words, and Paste Last keeps them either way. A
+loopback URL never leaves this computer (`net::loopback_agent`); another
+host goes through the system proxy and roots. A printed dictation
+(`hex dictation stop --print`) is never sent. Logs name the host and the HTTP
+status, never the token or the body. The card shows the URL, token, and body
+fields (drafts, saved as typing pauses) and the paste switch while on;
+`hex settings get endpoint.token` prints only whether a token is set
+([dictation/endpoint.rs](../../src/dictation/endpoint.rs),
+[rune_ui/labs/endpoint.rs](../../src/rune_ui/labs/endpoint.rs)). Checks:
+the tests in [dictation/endpoint.rs](../../src/dictation/endpoint.rs);
+`contributed_options_are_labs_toggles_off_by_default` in
+[panes.rs](../../src/rune_ui/tests/panes.rs). Not yet observed: a real
+dictation reaching an endpoint on a Windows PC; the Windows Labs goldens
+need regenerating on Linux with the new card.
 
 Subtitle export (`subtitle-export`, issue 633, macOS like Meetings; its row
 shows wherever Meetings does): while on, `hex meetings show <id> --srt` or

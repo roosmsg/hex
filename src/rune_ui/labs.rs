@@ -6,6 +6,7 @@
 //! Voice Filter, Playground) joins the main sidebar while on and is hidden
 //! while off.
 
+mod endpoint;
 mod group;
 #[cfg(all(target_os = "macos", hex_capture))]
 mod screenshots;
@@ -194,9 +195,18 @@ pub(super) struct Store {
     pub(super) tab: Tab,
     /// The chip selected: only this group's labs show.
     pub(super) group: Option<Group>,
+    /// Send to endpoint's fields, as typed.
+    pub(super) endpoint: endpoint::Editor,
 }
 
 impl Store {
+    pub(super) fn new(settings: &crate::app_settings::AppSettings) -> Self {
+        Self {
+            endpoint: endpoint::Editor::new(&settings.endpoint),
+            ..Self::default()
+        }
+    }
+
     fn query(&self) -> String {
         self.search.text.trim().to_lowercase()
     }
@@ -256,7 +266,7 @@ pub(super) fn reveal(ui: &mut Ui, link: &LabsLink, tx: &mut Tx) {
 fn open(ui: &mut Ui, tx: &mut Tx) {
     ui.select_pane(Pane::General, tx);
     ui.labs_open = true;
-    ui.lab_store = Store::default();
+    ui.lab_store = Store::new(&ui.settings);
     tx.settle();
 }
 
@@ -705,6 +715,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
             tr("Terminal paste"),
             tr("Paste with Ctrl+Shift+V so terminals accept it"),
         ));
+        rows.push(row(
+            Feature::SendToEndpoint,
+            Some(&GLOBE),
+            tr("Send to endpoint"),
+            tr("Each dictation goes to a local HTTP endpoint as JSON, for apps that take spoken commands"),
+        ));
     }
     #[cfg(hex_capture)]
     if ui.platform.scrawl.is_some() {
@@ -786,6 +802,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::AnnotateReplay => "lab-annotate-replay",
         Feature::MeetingImport => "lab-meeting-import",
         Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
+        Feature::SendToEndpoint => "lab-send-to-endpoint",
     }
 }
 
@@ -846,6 +863,7 @@ fn extras(ui: &Ui, p: Paint, entry: &Row) -> Option<El> {
                 )
                 .child(unload_after(ui, p)),
         ),
+        Lab::Feature(Feature::SendToEndpoint) => Some(endpoint::body(ui, p)),
         #[cfg(all(target_os = "macos", hex_capture))]
         Lab::Feature(Feature::Screenshots) => Some(screenshots::body(
             ui,

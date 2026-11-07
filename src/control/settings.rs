@@ -46,6 +46,8 @@ enum Kind {
     },
     Choice(&'static [&'static str]),
     Text,
+    /// Text that `hex settings get` and `list` show only as set or not: a token.
+    Secret,
     Shortcut(HotkeySlot),
     Path,
     Json,
@@ -59,6 +61,7 @@ impl Kind {
             Self::Integer { .. } => "integer",
             Self::Choice(_) => "choice",
             Self::Text => "text",
+            Self::Secret => "secret",
             Self::Shortcut(_) => "shortcut",
             Self::Path => "path",
             Self::Json => "json",
@@ -630,6 +633,31 @@ const KEYS: &[Key] = &[
         Kind::Bool,
         "Labs: let other apps see the dictation shortcut too (Windows)",
     ),
+    key(
+        "labs.send_to_endpoint",
+        Kind::Bool,
+        "Labs: POST each dictation as JSON to the local HTTP endpoint in endpoint.* instead of pasting it (Windows)",
+    ),
+    optional(
+        "endpoint.url",
+        Kind::Text,
+        "Labs › Send to endpoint: the http(s) URL that takes the POST; none (the default) sends nothing",
+    ),
+    optional(
+        "endpoint.token",
+        Kind::Secret,
+        "Labs › Send to endpoint: sent as a bearer token; none (the default) sends no Authorization header",
+    ),
+    key(
+        "endpoint.body",
+        Kind::Text,
+        "Labs › Send to endpoint: the JSON body, with {text} standing for the dictation",
+    ),
+    key(
+        "endpoint.paste",
+        Kind::Bool,
+        "Labs › Send to endpoint: also paste the dictation as usual; off, the endpoint takes the paste's place",
+    ),
     optional(
         "ui_language",
         Kind::Choice(&[
@@ -781,7 +809,9 @@ fn unavailable_under(name: &str, policy: crate::policy::Policy) -> Option<Contro
     }
     // A `labs.` key is only its feature's switch, so off its OS it does nothing.
     if let Some(feature) = crate::labs::Feature::for_settings_key(name)
-        && (name.starts_with("labs.") || name == "capture.replay_hotkey")
+        && (name.starts_with("labs.")
+            || name.starts_with("endpoint.")
+            || name == "capture.replay_hotkey")
         && !feature.on_this_os()
     {
         return Some(ControlError::new(
@@ -935,6 +965,11 @@ fn value_of(key: &Key, json: &Value) -> SettingValue {
             _ => Value::Null,
         },
         Kind::Choice(_) if NUMERIC_CHOICES.contains(&key.key) => Value::String(raw.to_string()),
+        // A token is never printed back, only whether there is one.
+        Kind::Secret => match raw {
+            Value::String(ref secret) if !secret.is_empty() => Value::String("(set)".into()),
+            other => other,
+        },
         _ => raw,
     };
     SettingValue {
@@ -1285,7 +1320,19 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
                 Value::String((*choice).into())
             })
         }
-        Kind::Text => Ok(Value::String(raw.into())),
+        Kind::Text | Kind::Secret => {
+            if name == "endpoint.url"
+                && let Err(why) = crate::dictation::endpoint::check_url(trimmed)
+            {
+                return Err(invalid(name, &why));
+            }
+            if name == "endpoint.body"
+                && let Err(why) = crate::dictation::endpoint::check_body(trimmed)
+            {
+                return Err(invalid(name, &why));
+            }
+            Ok(Value::String(raw.into()))
+        }
         Kind::Path => {
             let path = match trimmed.strip_prefix("~/") {
                 Some(rest) => crate::app_paths::home_dir()
