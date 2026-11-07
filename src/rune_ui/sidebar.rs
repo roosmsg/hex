@@ -228,7 +228,8 @@ pub(super) fn sidebar(ui: &Ui, p: Paint) -> El {
         .children(sidebar_update::control(ui, p))
         .children(sidebar_update::notes(ui, p))
         .children(sidebar_update::blocked(ui, p))
-        .children(host::QUIT_IN_WINDOW.then(|| quit_item(p)))
+        .children((host::QUIT_IN_WINDOW && !repo_link(ui)).then(|| quit_item(p)))
+        .children(repo_link(ui).then(|| repo_item(p)))
         .child(footer(ui, p))
 }
 
@@ -490,6 +491,47 @@ fn nav_item(p: Paint, pane: Pane, on: bool) -> El {
         item = item.fill(c.layer_02);
     }
     lists::source_item(item, on)
+}
+
+/// Hex's source, where Windows' window has no Quit (the tray quits).
+pub(super) const REPO_URL: &str = "https://github.com/anomalyco/hex";
+
+/// Windows (the platform shown, so fixtures agree with the host): the tray
+/// has Quit Hex, and the window's last row opens Hex's source instead.
+fn repo_link(ui: &Ui) -> bool {
+    ui.platform.caps.os == super::platform::Os::Windows
+}
+
+fn repo_item(p: Paint) -> El {
+    let c = &p.k.c;
+    row()
+        .key("github")
+        .role("button")
+        .label(tr("Hex on GitHub"))
+        .h(NAV_ROW_HEIGHT)
+        .px(6.0)
+        .mt(NAV_ROW_GAP)
+        .center_y()
+        .radius(p.k.radius.sm)
+        .hover(c.hover)
+        .press(c.pressed)
+        .on_press(|ui: &mut Ui| {
+            if ui.live()
+                && let Err(error) = crate::desktop::opencode_catalog::open_url(REPO_URL)
+            {
+                ui.error = Some(format!("{error:#}"));
+            }
+        })
+        .focusable(true)
+        .focus_ring(2.0, -2.0, c.border_focus)
+        .child(
+            text(tr("Hex on GitHub"))
+                .key("label")
+                .font(p.k.ty.ui)
+                .color(c.text_muted)
+                .truncate()
+                .a11y_hidden(),
+        )
 }
 
 /// Linux has no tray: the window's way to stop Hex. Closing the window

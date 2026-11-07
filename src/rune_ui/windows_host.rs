@@ -26,8 +26,9 @@ pub(super) const RECORDS_KEY_EVENTS: bool = false;
 /// Windows' Terminal paste (Ctrl+Shift+V) is a Labs feature, not a row in
 /// General.
 pub(super) const TERMINAL_PASTE: bool = false;
-/// The window offers Quit Hex beside the tray's.
-pub(super) const QUIT_IN_WINDOW: bool = true;
+/// The tray offers Quit Hex; the window's last row is Hex on GitHub
+/// instead (`sidebar::repo_item`).
+pub(super) const QUIT_IN_WINDOW: bool = false;
 
 /// How often shortcut capture samples the keyboard.
 const CHORD_POLL: Duration = Duration::from_millis(16);

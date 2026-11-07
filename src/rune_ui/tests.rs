@@ -575,6 +575,18 @@ fn quit_hex_in_the_sidebar_asks_the_host_to_quit() {
 }
 
 #[test]
+fn windows_links_to_the_repository_where_quit_was() {
+    let mut rt = runtime("windows-settings", true, PANE_SIZE);
+    assert!(
+        rt.find("github").is_some(),
+        "the last sidebar row opens GitHub"
+    );
+    assert!(rt.find("quit").is_none(), "the tray quits Hex on Windows");
+    tap(&mut rt, "github");
+    assert!(!rt.state.quit_requested);
+}
+
+#[test]
 fn ctrl_q_quits_hex() {
     let mut rt = runtime("portal", true, PANE_SIZE);
     key(&mut rt, Key::Command('q'), Mods::default());

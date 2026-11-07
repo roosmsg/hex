@@ -1185,6 +1185,7 @@ const TRANSLATIONS: &[(&str, [&str; 6])] = &[
     ("Local build · updates off", ["Lokalna kompilacja · aktualizacje wyłączone", "本地构建 · 更新已关闭", "ローカルビルド · 更新はオフ", "Lokaler Build · Updates aus", "Compilación local · actualizaciones desactivadas", "Локальна збірка · оновлення вимкнено"]),
     ("Updated from your source checkout", ["Aktualizowany z Twojej kopii źródeł", "通过你的源代码检出更新", "ソースのチェックアウトから更新します", "Wird aus deinem Quellcode-Checkout aktualisiert", "Se actualiza desde tu copia del código fuente", "Оновлюється з локальної копії вихідного коду"]),
     ("Quit Hex", ["Zakończ Hex", "退出 Hex", "Hex を終了", "Hex beenden", "Salir de Hex", "Вийти з Hex"]),
+    ("Hex on GitHub", ["Hex na GitHubie", "GitHub 上的 Hex", "GitHub の Hex", "Hex auf GitHub", "Hex en GitHub", "Hex на GitHub"]),
     ("Hex Dictation", ["Dyktowanie Hex", "Hex 听写", "Hex 音声入力", "Hex-Diktat", "Dictado de Hex", "Диктування Hex"]),
     ("Hex Dictation: recording", ["Dyktowanie Hex: nagrywanie", "Hex 听写：录音中", "Hex 音声入力: 録音中", "Hex-Diktat: Aufnahme", "Dictado de Hex: grabando", "Диктування Hex: запис"]),
     ("Hex Dictation: transcribing", ["Dyktowanie Hex: transkrypcja", "Hex 听写：转写中", "Hex 音声入力: 文字起こし中", "Hex-Diktat: transkribiert", "Dictado de Hex: transcribiendo", "Диктування Hex: розпізнавання"]),

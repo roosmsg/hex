@@ -831,6 +831,7 @@ const TRANSLATIONS: &[(&str, &str)] = &[
     ("Local build · updates off", "Build local · mises à jour désactivées"),
     ("Updated from your source checkout", "Mis à jour depuis votre copie du code source"),
     ("Quit Hex", "Quitter Hex"),
+    ("Hex on GitHub", "Hex sur GitHub"),
     ("Hex Dictation", "Dictée Hex"),
     ("Hex Dictation: recording", "Dictée Hex : enregistrement"),
     ("Hex Dictation: transcribing", "Dictée Hex : transcription"),

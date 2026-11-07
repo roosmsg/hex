@@ -246,7 +246,7 @@ hex app
     └── tray Quit / Ctrl-C / restart into an update -> AppHandle::quit -> runtime stops the listener
 ```
 
-- Quit Hex in the window or the tray stops the listener and ends the app;
+- Quit Hex in the tray (the window's last row is Hex on GitHub instead) stops the listener and ends the app;
   closing the window only hides it.
 - The window uses the shared Rune panes (General, Modes,
   History, the transcription picker, first-run setup) with Windows rows:
