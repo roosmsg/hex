@@ -15,6 +15,7 @@ pub(crate) mod capture_capsule;
 mod controls;
 #[cfg(target_os = "macos")]
 pub(crate) mod deep_link;
+mod drafts;
 mod explainer;
 mod found;
 mod found_choice;
@@ -87,8 +88,6 @@ use scenes::{SCENES, Scene, fixture, mac_fixture, portal_fixture};
 use settings::Capture;
 use sidebar::{BuildKind, Pane, pane_header, sidebar};
 
-/// How long typing pauses before a text field's edit is saved.
-const DRAFT_DELAY: Duration = Duration::from_millis(250);
 /// How often timed state (draft saves, "Saved" badges, the OpenCode retry,
 /// the setup beat, permission polling) is checked while the window shows.
 const WINDOW_TICK: Duration = Duration::from_millis(250);
@@ -732,15 +731,6 @@ pub(crate) struct Ui {
     update_asked: bool,
 }
 
-/// Which of the window's text editors hold unsaved typing.
-#[derive(Clone, Copy, Debug)]
-struct Drafts {
-    modes: bool,
-    vocabulary: bool,
-    /// Labs › Send to endpoint's fields.
-    endpoint: bool,
-}
-
 impl Ui {
     /// The state a headless render starts from before its scene: default
     /// settings and a fixture service, built without touching the data
@@ -896,51 +886,6 @@ impl Ui {
     fn settings_changed(&mut self) {
         if !meetings::available(self) {
             self.meetings.view = meetings::View::Recordings;
-        }
-    }
-
-    /// The settings with every text field's current text applied.
-    fn drafted(&self) -> AppSettings {
-        let mut candidate = self.settings.clone();
-        self.modes.project(&mut candidate);
-        candidate.vocabulary = self.vocabulary.project();
-        self.lab_store.endpoint.project(&mut candidate);
-        candidate
-    }
-
-    /// Which editors hold typing the saved settings don't have yet.
-    fn drafts(&self) -> Drafts {
-        let settings = &self.settings;
-        let mut modes = settings.clone();
-        self.modes.project(&mut modes);
-        let mut endpoint = settings.clone();
-        self.lab_store.endpoint.project(&mut endpoint);
-        Drafts {
-            modes: modes.dictation_processing != settings.dictation_processing,
-            vocabulary: self.vocabulary.project() != settings.vocabulary,
-            endpoint: endpoint.endpoint != settings.endpoint,
-        }
-    }
-
-    /// Saves text-field edits once typing pauses for [`DRAFT_DELAY`].
-    fn save_drafts(&mut self, now: Instant) -> bool {
-        let candidate = self.drafted();
-        if candidate == self.settings {
-            self.draft_since = None;
-            return false;
-        }
-        let since = *self.draft_since.get_or_insert(now);
-        if now.duration_since(since) < DRAFT_DELAY {
-            return false;
-        }
-        self.commit(candidate)
-    }
-
-    /// Saves pending text-field edits now (leaving a pane or a mode).
-    fn flush_drafts(&mut self) {
-        let candidate = self.drafted();
-        if candidate != self.settings {
-            self.commit(candidate);
         }
     }
 
