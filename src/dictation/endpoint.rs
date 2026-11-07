@@ -1,8 +1,7 @@
-//! Labs › Send to endpoint: a dictation that starts with an endpoint's
-//! trigger word goes to that local HTTP endpoint as JSON, without the
-//! trigger word, for apps that take spoken commands ("Restage, open
-//! research"). An endpoint without a trigger word takes every dictation no
-//! trigger word claims. `labs.send_to_endpoint` and `endpoints`; Windows.
+//! Labs › Send to endpoint: a dictation that starts with an endpoint's name
+//! goes to that local HTTP endpoint as JSON, without the name, for apps that
+//! take spoken commands ("Restage, open research"). Any other dictation
+//! pastes as usual. `labs.send_to_endpoint` and `endpoints`; Windows.
 //!
 //! Gated where the work starts: [`from_settings`] is empty while the lab is
 //! off, and the output worker then pastes as it always did.
@@ -26,7 +25,7 @@ pub const MASKED_TOKEN: &str = "(set)";
 /// How long one POST may take, connection included.
 const TIMEOUT: Duration = Duration::from_secs(10);
 
-/// A trigger word may span this many spoken words ("hey restage").
+/// A name may span this many spoken words ("living room lights").
 const MAX_TRIGGER_WORDS: usize = 4;
 
 /// One endpoint as the output worker sends with: a snapshot, replaced
@@ -34,8 +33,8 @@ const MAX_TRIGGER_WORDS: usize = 4;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Endpoint {
     pub name: String,
-    /// The trigger word as letters and digits only, lower case; empty for
-    /// the endpoint that takes every unclaimed dictation.
+    /// The name as letters and digits only, lower case: what a dictation
+    /// starts with to come here.
     pub trigger: String,
     pub url: String,
     pub token: Option<String>,
@@ -45,7 +44,7 @@ pub struct Endpoint {
 }
 
 /// The endpoints `settings` hold that can receive, while the lab is on
-/// here: those with a URL. Empty otherwise, and nothing is sent.
+/// here: those with a name and a URL. Empty otherwise, and nothing is sent.
 pub fn from_settings(settings: &AppSettings) -> Vec<Endpoint> {
     let feature = crate::labs::Feature::SendToEndpoint;
     if !feature.on_this_os() || !feature.on(settings) {
@@ -62,7 +61,9 @@ pub fn from_settings(settings: &AppSettings) -> Vec<Endpoint> {
 impl Endpoint {
     fn from_entry(entry: &EndpointSettings) -> Option<Self> {
         let url = entry.url.as_deref()?.trim();
-        if url.is_empty() {
+        let name = entry.name.trim();
+        let trigger = fold(name);
+        if url.is_empty() || trigger.is_empty() {
             return None;
         }
         let body = match entry.body.trim() {
@@ -70,11 +71,8 @@ impl Endpoint {
             body => body.to_owned(),
         };
         Some(Self {
-            name: match entry.name.trim() {
-                "" => crate::net::host(url),
-                name => name.to_owned(),
-            },
-            trigger: fold(&entry.trigger),
+            name: name.to_owned(),
+            trigger,
             url: url.to_owned(),
             token: entry
                 .token
@@ -130,11 +128,10 @@ impl Endpoint {
 }
 
 /// The endpoint `text` is for and what to send it: the text after the
-/// longest trigger word it starts with, or, when no trigger word matches,
-/// the whole text for the endpoint without one. `None`: paste as usual.
+/// longest endpoint name it starts with. `None`: paste as usual.
 ///
-/// A trigger word matches however speech splits or punctuates it: "Re-stage,
-/// open research" and "re stage open research" both start with "Restage".
+/// A name matches however speech splits or punctuates it: "Re-stage, open
+/// research" and "re stage open research" both start with "Restage".
 pub fn route<'a>(endpoints: &'a [Endpoint], text: &str) -> Option<(&'a Endpoint, String)> {
     let words = words(text);
     let mut best: Option<(&Endpoint, usize)> = None;
@@ -162,10 +159,7 @@ pub fn route<'a>(endpoints: &'a [Endpoint], text: &str) -> Option<(&'a Endpoint,
         });
         return Some((endpoint, rest.trim_end().to_owned()));
     }
-    endpoints
-        .iter()
-        .find(|endpoint| endpoint.trigger.is_empty())
-        .map(|endpoint| (endpoint, text.trim().to_owned()))
+    None
 }
 
 /// The words of `text` with where each ends, folded for comparison.
@@ -248,14 +242,14 @@ pub fn check_body(body: &str) -> Result<(), String> {
 }
 
 /// Why `endpoints` can't be saved, if they can't: at most
-/// [`MAX_ENDPOINTS`], valid URLs and bodies, no trigger word twice, and at
-/// most one endpoint without a trigger word.
+/// [`MAX_ENDPOINTS`], valid URLs and bodies, and no two names that sound the
+/// same ("Restage" and "re stage"). An endpoint without a name is kept but
+/// receives nothing until it has one.
 pub fn check_all(endpoints: &[EndpointSettings]) -> Result<(), String> {
     if endpoints.len() > MAX_ENDPOINTS {
         return Err(format!("at most {MAX_ENDPOINTS} endpoints"));
     }
-    let mut triggers = HashSet::new();
-    let mut catch_all = false;
+    let mut names = HashSet::new();
     for (index, entry) in endpoints.iter().enumerate() {
         let which = match entry.name.trim() {
             "" => format!("endpoint {}", index + 1),
@@ -267,17 +261,10 @@ pub fn check_all(endpoints: &[EndpointSettings]) -> Result<(), String> {
         if !entry.body.trim().is_empty() {
             check_body(entry.body.trim()).map_err(|why| format!("{which}: {why}"))?;
         }
-        let trigger = fold(&entry.trigger);
-        if trigger.is_empty() {
-            if std::mem::replace(&mut catch_all, true) {
-                return Err(format!(
-                    "{which}: only one endpoint may go without a trigger word"
-                ));
-            }
-        } else if !triggers.insert(trigger) {
+        let spoken = fold(&entry.name);
+        if !spoken.is_empty() && !names.insert(spoken) {
             return Err(format!(
-                "{which}: another endpoint has the trigger word {:?}",
-                entry.trigger.trim()
+                "{which}: another endpoint has a name that sounds the same"
             ));
         }
     }
@@ -338,10 +325,10 @@ pub fn keep_masked_tokens(
 mod tests {
     use super::*;
 
-    fn endpoint(name: &str, trigger: &str) -> Endpoint {
+    fn endpoint(name: &str) -> Endpoint {
         Endpoint {
             name: name.into(),
-            trigger: fold(trigger),
+            trigger: fold(name),
             url: format!("http://127.0.0.1:1/{name}"),
             token: None,
             body: DEFAULT_ENDPOINT_BODY.into(),
@@ -350,19 +337,19 @@ mod tests {
     }
 
     #[test]
-    fn a_trigger_word_sends_the_rest_to_its_endpoint() {
-        let endpoints = [endpoint("restage", "Restage"), endpoint("lights", "lights")];
+    fn a_name_sends_the_rest_to_its_endpoint() {
+        let endpoints = [endpoint("Restage"), endpoint("Lights")];
         let (to, rest) = route(&endpoints, "Restage, open research.").unwrap();
-        assert_eq!(to.name, "restage");
+        assert_eq!(to.name, "Restage");
         assert_eq!(rest, "open research.");
-        let (to, rest) = route(&endpoints, "Lights: dim to 30%").unwrap();
-        assert_eq!(to.name, "lights");
+        let (to, rest) = route(&endpoints, "lights: dim to 30%").unwrap();
+        assert_eq!(to.name, "Lights");
         assert_eq!(rest, "dim to 30%");
     }
 
     #[test]
-    fn a_trigger_word_matches_however_speech_splits_it() {
-        let endpoints = [endpoint("restage", "Restage")];
+    fn a_name_matches_however_speech_splits_it() {
+        let endpoints = [endpoint("Restage")];
         for spoken in [
             "re stage open research",
             "Re-stage open research",
@@ -376,8 +363,8 @@ mod tests {
     }
 
     #[test]
-    fn a_word_that_only_starts_like_the_trigger_is_not_it() {
-        let endpoints = [endpoint("restage", "Restage")];
+    fn a_word_that_only_starts_like_the_name_is_not_it() {
+        let endpoints = [endpoint("Restage")];
         assert!(route(&endpoints, "Restaged the play yesterday").is_none());
         assert!(route(&endpoints, "Rest is good").is_none());
         assert!(
@@ -387,28 +374,19 @@ mod tests {
     }
 
     #[test]
-    fn the_longest_trigger_word_wins() {
-        let endpoints = [endpoint("short", "hey"), endpoint("long", "hey restage")];
+    fn the_longest_name_wins() {
+        let endpoints = [endpoint("Lights"), endpoint("Lights upstairs")];
         assert_eq!(
-            route(&endpoints, "Hey Restage, open x").unwrap().0.name,
-            "long"
+            route(&endpoints, "Lights upstairs, off").unwrap().0.name,
+            "Lights upstairs"
         );
-        assert_eq!(route(&endpoints, "Hey, open x").unwrap().0.name, "short");
+        assert_eq!(route(&endpoints, "Lights, off").unwrap().0.name, "Lights");
     }
 
     #[test]
-    fn an_endpoint_without_a_trigger_word_takes_the_rest() {
-        let endpoints = [endpoint("restage", "Restage"), endpoint("all", "")];
-        assert_eq!(
-            route(&endpoints, "Restage, open research").unwrap().0.name,
-            "restage"
-        );
-        let (to, rest) = route(&endpoints, "  just some text ").unwrap();
-        assert_eq!((to.name.as_str(), rest.as_str()), ("all", "just some text"));
-        assert!(
-            route(&endpoints[..1], "just some text").is_none(),
-            "pasted as usual"
-        );
+    fn a_dictation_without_a_name_pastes_as_usual() {
+        let endpoints = [endpoint("Restage")];
+        assert!(route(&endpoints, "  just some text ").is_none());
     }
 
     #[test]
@@ -439,17 +417,15 @@ mod tests {
     }
 
     #[test]
-    fn the_list_refuses_doubled_triggers_and_two_catch_alls() {
-        let entry = |name: &str, trigger: &str| EndpointSettings {
+    fn the_list_refuses_names_that_sound_the_same() {
+        let entry = |name: &str| EndpointSettings {
             name: name.into(),
-            trigger: trigger.into(),
             url: Some("http://127.0.0.1:1/x".into()),
             ..Default::default()
         };
-        assert!(check_all(&[entry("a", "Restage"), entry("b", "lights"), entry("c", "")]).is_ok());
-        assert!(check_all(&[entry("a", "Restage"), entry("b", "re stage")]).is_err());
-        assert!(check_all(&[entry("a", ""), entry("b", " ")]).is_err());
-        let mut bad = entry("a", "x");
+        assert!(check_all(&[entry("Restage"), entry("Lights"), entry(""), entry(" ")]).is_ok());
+        assert!(check_all(&[entry("Restage"), entry("re stage")]).is_err());
+        let mut bad = entry("a");
         bad.url = Some("not a url".into());
         assert!(check_all(&[bad]).is_err());
         assert!(check_all(&vec![EndpointSettings::default(); MAX_ENDPOINTS + 1]).is_err());
@@ -509,12 +485,15 @@ mod tests {
         let mut settings = AppSettings::default();
         settings.endpoints.push(EndpointSettings {
             name: "Restage".into(),
-            trigger: "Restage".into(),
             url: Some("http://127.0.0.1:1234/command".into()),
             token: Some(" ".into()),
             ..Default::default()
         });
         settings.endpoints.push(EndpointSettings::default());
+        settings.endpoints.push(EndpointSettings {
+            url: Some("http://127.0.0.1:1/unnamed".into()),
+            ..Default::default()
+        });
         assert!(from_settings(&settings).is_empty(), "the lab is off");
         settings.labs.send_to_endpoint = true;
         let endpoints = from_settings(&settings);
@@ -522,7 +501,7 @@ mod tests {
             assert_eq!(
                 endpoints.len(),
                 1,
-                "an endpoint without a URL receives nothing"
+                "an endpoint without a URL or a name receives nothing"
             );
             assert_eq!(endpoints[0].token, None, "a blank token is none");
             assert_eq!(endpoints[0].trigger, "restage");

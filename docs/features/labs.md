@@ -37,7 +37,7 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Also pause the browser no pause_browser_media      (macOS)   pause a playing tab too, with Pause media (#301); General shows its permission row
 ├── Share dictation shortcut no share_dictation_shortcut (Windows) apps such as Discord see the shortcut too (#176)
 ├── Send to endpoint no    labs.send_to_endpoint + endpoints (Windows)
-│                                        a dictation that starts with an endpoint's trigger word is POSTed as JSON to that local HTTP endpoint, without the trigger word; others paste as usual
+│                                        a dictation that starts with an endpoint's name is POSTed as JSON to that local HTTP endpoint, without the name; others paste as usual
 ├── Unload model when idle no labs.unload_idle + labs.unload_idle_minutes (5/15/30/60, default 15)
 │                                        the engine frees the speech model after that long unused (#442)
 ├── Restore shortcut default no labs.restore_shortcut_default   Paste last dictation's row offers its default back (#613)
@@ -372,13 +372,13 @@ Send to endpoint (`send-to-endpoint`, Windows): while on, the Windows output
 worker (`process_dictation_job` in
 [windows/dictation.rs](../../src/windows/dictation.rs)) routes each finished
 dictation, once the Output steps have run, by `dictation::endpoint::route`:
-a dictation that starts with an endpoint's trigger word goes to that endpoint
-without the trigger word ("Restage, open research" sends "open research");
-the longest matching trigger wins, and a trigger matches however speech
-splits or punctuates it ("Re-stage", "re stage"). An endpoint without a
-trigger word takes every dictation no trigger claims; with none, an
-unclaimed dictation pastes as usual. `endpoints` is a list (at most 10) of
-`{name, trigger, url, token, body, paste}`: `token` is sent as a bearer
+a dictation that starts with an endpoint's name goes to that endpoint
+without the name ("Restage, open research" sends "open research"); the
+longest matching name wins, and a name matches however speech splits or
+punctuates it ("Re-stage", "re stage"). Any other dictation pastes as usual,
+and an endpoint without a name receives nothing. `endpoints` is a list (at
+most 10, no two names that sound the same) of
+`{name, url, token, body, paste}`: `token` is sent as a bearer
 token, `body` uses `{text}` for the words escaped for a JSON string (default
 `{"text": "{text}"}`), and `paste` also pastes what was sent. A send that
 fails with no paste fails the dictation, so the HUD says so rather than
@@ -386,12 +386,11 @@ dropping the words; Paste Last keeps the full text either way. A loopback
 URL never leaves this computer (`net::loopback_agent`); another host goes
 through the system proxy and roots. A printed dictation is never sent. Logs
 name the endpoint, its host and the HTTP status, never the token or the
-body. The card lists the endpoints (name, trigger word, URL, token, body,
-paste) with Remove and Add endpoint while on; the fields are drafts saved as
+body. The card lists the endpoints (name, URL, token, body, paste) with Remove and Add endpoint while on; the fields are drafts saved as
 typing pauses. `hex settings get endpoints` shows each token as `(set)`, and
 setting the list back with `(set)` keeps the saved token. A settings file
 from the single-endpoint version (`endpoint`) becomes the first endpoint,
-with no trigger word ([dictation/endpoint.rs](../../src/dictation/endpoint.rs),
+without a name until one is given ([dictation/endpoint.rs](../../src/dictation/endpoint.rs),
 [app_settings/endpoint.rs](../../src/app_settings/endpoint.rs),
 [rune_ui/labs/endpoint.rs](../../src/rune_ui/labs/endpoint.rs)). Checks:
 the tests in those files;

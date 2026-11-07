@@ -719,7 +719,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
             Feature::SendToEndpoint,
             Some(&GLOBE),
             tr("Send to endpoint"),
-            tr("Dictations that start with a trigger word go to a local HTTP endpoint as JSON, for apps that take spoken commands"),
+            tr("Start with an endpoint's name to send it the rest: \"Restage, open research\""),
         ));
     }
     #[cfg(hex_capture)]

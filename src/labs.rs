@@ -115,9 +115,9 @@ pub enum Feature {
     MeetingImport,
     QuitClosesWindow,
     ExpireMeetingAudio,
-    /// A dictation that starts with an endpoint's trigger word is POSTed as
-    /// JSON to that local HTTP endpoint (`endpoints`), for apps that take
-    /// spoken commands (Windows).
+    /// A dictation that starts with an endpoint's name is POSTed as JSON to
+    /// that local HTTP endpoint (`endpoints`), for apps that take spoken
+    /// commands (Windows).
     SendToEndpoint,
 }
 
@@ -558,7 +558,7 @@ impl Feature {
             Self::PauseBrowser => "Also pause the browser while dictating, with Pause media",
             Self::ShareShortcut => "Let apps such as Discord see the dictation shortcut too",
             Self::SendToEndpoint => {
-                "A dictation that starts with an endpoint's trigger word goes to that local HTTP endpoint as JSON (endpoints); others paste as usual"
+                "A dictation that starts with an endpoint's name goes to that local HTTP endpoint as JSON (endpoints); others paste as usual"
             }
             Self::UnloadIdle => {
                 "Free the speech model's memory after a while unused (labs.unload_idle_minutes); the next dictation reloads it"

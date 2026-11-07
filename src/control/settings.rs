@@ -633,13 +633,13 @@ const KEYS: &[Key] = &[
     key(
         "labs.send_to_endpoint",
         Kind::Bool,
-        "Labs: a dictation that starts with an endpoint's trigger word goes to that local HTTP endpoint as JSON (endpoints; Windows)",
+        "Labs: a dictation that starts with an endpoint's name goes to that local HTTP endpoint as JSON (endpoints; Windows)",
     ),
     key(
         "endpoints",
         Kind::Json,
-        "Labs › Send to endpoint: a list of {name, trigger, url, token, body, paste}; body uses {text} for the words, \
-         an empty trigger takes every other dictation; tokens show as (set), and (set) keeps the saved one",
+        "Labs › Send to endpoint: a list of {name, url, token, body, paste}; a dictation that starts with the name goes there, \
+         body uses {text} for the words; tokens show as (set), and (set) keeps the saved one",
     ),
     optional(
         "ui_language",

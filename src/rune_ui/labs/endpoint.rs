@@ -1,6 +1,6 @@
-//! Labs › Send to endpoint's card body: one block per endpoint (name,
-//! trigger word, URL, bearer token, JSON body, and whether what is sent is
-//! still pasted), Remove on each, and Add endpoint. The text fields are
+//! Labs › Send to endpoint's card body: one block per endpoint (name, which
+//! a dictation starts with to go there, URL, bearer token, JSON body, and
+//! whether what is sent is still pasted), Remove on each, and Add endpoint. The text fields are
 //! drafts saved once typing pauses (`Ui::save_drafts`), like Output's modes
 //! and the vocabulary.
 
@@ -19,7 +19,6 @@ use crate::desktop::i18n::tr;
 struct Entry {
     id: u64,
     name: TextEdit,
-    trigger: TextEdit,
     url: TextEdit,
     token: TextEdit,
     body: TextEdit,
@@ -29,7 +28,6 @@ struct Entry {
 #[derive(Clone, Copy)]
 enum Field {
     Name,
-    Trigger,
     Url,
     Token,
     Body,
@@ -65,7 +63,6 @@ impl Editor {
         self.entries.push(Entry {
             id,
             name: TextEdit::new(endpoint.name.clone()),
-            trigger: TextEdit::new(endpoint.trigger.clone()),
             url: TextEdit::new(endpoint.url.clone().unwrap_or_default()),
             token: TextEdit::new(endpoint.token.clone().unwrap_or_default()),
             body: TextEdit::new(endpoint.body.clone()),
@@ -82,7 +79,6 @@ impl Editor {
             .iter()
             .map(|entry| EndpointSettings {
                 name: entry.name.text.trim().to_owned(),
-                trigger: entry.trigger.text.trim().to_owned(),
                 url: non_blank(&entry.url.text),
                 token: non_blank(&entry.token.text),
                 body: non_blank(&entry.body.text).unwrap_or_else(|| DEFAULT_ENDPOINT_BODY.into()),
@@ -95,7 +91,6 @@ impl Editor {
         match self.entries.iter_mut().find(|entry| entry.id == id) {
             Some(entry) => match field {
                 Field::Name => &mut entry.name,
-                Field::Trigger => &mut entry.trigger,
                 Field::Url => &mut entry.url,
                 Field::Token => &mut entry.token,
                 Field::Body => &mut entry.body,
@@ -116,13 +111,7 @@ fn non_blank(text: &str) -> Option<String> {
 /// The card's settings while the lab is on.
 pub(super) fn body(ui: &Ui, p: Paint) -> El {
     let editor = &ui.lab_store.endpoint;
-    let mut body = col().key("endpoints").gap(12.0).child(
-        text(tr("Start a dictation with an endpoint's trigger word, such as \"Restage, open research\": the rest goes to that endpoint. Without a trigger word, an endpoint takes every other dictation. {text} in the body stands for the words."))
-            .key("hint")
-            .font(DESCRIPTION)
-            .color(p.muted())
-            .wrap(),
-    );
+    let mut body = col().key("endpoints").gap(12.0);
     for entry in &editor.entries {
         body = body.child(entry_block(p, entry));
     }
@@ -161,19 +150,6 @@ fn entry_block(p: Paint, entry: &Entry) -> El {
                         "Restage",
                         id,
                         Field::Name,
-                    )
-                    .grow(1.0)
-                    .shrink(),
-                )
-                .child(
-                    field(
-                        p,
-                        "trigger",
-                        tr("Trigger word"),
-                        &entry.trigger,
-                        "Restage",
-                        id,
-                        Field::Trigger,
                     )
                     .grow(1.0)
                     .shrink(),
@@ -262,7 +238,6 @@ fn add_endpoint(ui: &mut Ui, _tx: &mut Tx) {
     for entry in &mut editor.entries {
         for edit in [
             &mut entry.name,
-            &mut entry.trigger,
             &mut entry.url,
             &mut entry.token,
             &mut entry.body,

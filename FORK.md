@@ -15,34 +15,31 @@ as [Restage](https://github.com/roosmsg/Restage), instead of only pasting it.
 A new lab in Settings › Labs, in the Output group. It is off by default.
 
 While it is on, Hex looks at how each finished dictation starts. If it starts
-with an endpoint's **trigger word**, the rest of the dictation is sent as JSON
-to that endpoint with an HTTP POST, after Hex's own Output steps
-(corrections, transformations):
+with an endpoint's **name**, the rest of the dictation is sent as JSON to
+that endpoint with an HTTP POST, after Hex's own Output steps (corrections,
+transformations):
 
-- "Restage, open research" sends `open research` to the endpoint whose
-  trigger word is *Restage*.
-- A dictation without a trigger word pastes as usual, so normal dictation
-  keeps working with the lab on.
-- An endpoint with an **empty** trigger word takes every dictation no other
-  trigger word claims (that was the lab's first behaviour).
+- "Restage, open research" sends `open research` to the endpoint named
+  *Restage*.
+- A dictation that starts with no endpoint's name pastes as usual, so normal
+  dictation keeps working with the lab on.
 
 Each endpoint has these fields; the card has *Add endpoint* and *Remove*:
 
 | Field | Meaning |
 | --- | --- |
-| Name | What the card and the log call it, such as Restage |
-| Trigger word | Said first, it sends the rest here; empty takes every other dictation |
+| Name | Said first, it sends the rest here, such as Restage; without one the endpoint receives nothing |
 | Endpoint URL | The http(s) URL that takes the POST |
 | Bearer token | Sent as `Authorization: Bearer …`, if set |
 | JSON body | Default `{"text": "{text}"}`; `{text}` is the words, escaped for JSON |
 | Also paste the dictation | Paste what was sent too; off by default |
 
-- A trigger word matches however speech writes it: "Re-stage", "re stage" and
-  "Restage," all count. The longest matching trigger word wins.
+- A name matches however speech writes it: "Re-stage", "re stage" and
+  "Restage," all count. The longest matching name wins.
 - From a shell: `hex labs on send-to-endpoint`, and the list as JSON with
   `hex settings get endpoints` and `hex settings set endpoints '[…]'`. Tokens
   show as `(set)`; setting the list back with `(set)` keeps the saved token.
-- At most 10 endpoints, no trigger word twice, and only one endpoint without one.
+- At most 10 endpoints, and no two names that sound the same.
 
 How it behaves:
 
@@ -55,7 +52,7 @@ How it behaves:
 - **Printed dictations** (`hex dictation stop --print`) are never sent.
 - The request times out after 10 seconds.
 - A settings file from the first, single-endpoint version keeps its endpoint:
-  it becomes the first in the list, without a trigger word.
+  it becomes the first in the list, without a name; give it one to use it.
 
 It is called "endpoint" rather than "local API" because Hex already has a
 `local_api` module: its own server.
@@ -80,16 +77,13 @@ it has no tray. macOS is unchanged.
 
 Restage's local API takes spoken commands at `POST /command`.
 
-1. Run `restage api`, or open `%LOCALAPPDATA%\Restage\local-api.json`, to find
-   the port and the token.
-2. Set the endpoint URL to `http://127.0.0.1:<port>/command` and the bearer
-   token to that token.
-3. Set the trigger word to `Restage` and leave the body as it is:
-   `{"text": "{text}"}` is what Restage expects.
-4. Dictate "Restage, open research", and Restage starts that workspace.
+1. In Restage, open Settings › *Connect apps* and copy the command URL and
+   the token.
+2. Name the endpoint `Restage`, paste the URL and the token, and leave the
+   body as it is: `{"text": "{text}"}` is what Restage expects.
+3. Dictate "Restage, open research", and Restage starts that workspace.
 
-The port and token change every time Restage starts, so for now they have to
-be updated after a restart.
+The URL and token stay the same when Restage restarts.
 
 ## Building and installing
 

@@ -308,7 +308,7 @@ pub struct AppSettings {
     pub experimental: ExperimentalSettings,
     /// The Labs features' own switches (`crate::labs`).
     pub labs: LabsSettings,
-    /// Labs › Send to endpoint's endpoints, each with its trigger word (Windows).
+    /// Labs › Send to endpoint's endpoints, each reached by saying its name first (Windows).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub endpoints: Vec<EndpointSettings>,
     /// The single endpoint of the lab's first version, read once and moved

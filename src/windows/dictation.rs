@@ -930,7 +930,7 @@ fn process_dictation_job(
             return Err("text replacements produced empty output".into());
         }
         // A printed dictation goes to its caller alone. Otherwise Labs ›
-        // Send to endpoint routes it by its trigger word and sends the rest
+        // Send to endpoint routes it by the endpoint name it starts with and sends the rest
         // in the paste's place (or beside it, with the endpoint's paste); a
         // failed send with no paste fails the dictation, so the HUD says so
         // instead of dropping it. Unrouted, it pastes as usual.
@@ -946,7 +946,7 @@ fn process_dictation_job(
         let mut pasted_text = text.clone();
         if let Some((endpoint, words)) = &routed {
             if words.is_empty() {
-                return Err(format!("{}: nothing after the trigger word", endpoint.name));
+                return Err(format!("{}: nothing after the name", endpoint.name));
             }
             match endpoint.send(words) {
                 Ok(status) => tracing::info!(
