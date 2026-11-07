@@ -4,9 +4,20 @@
 It adds a way for Hex to hand a dictation to another app on the same PC, such
 as [Restage](https://github.com/roosmsg/Restage), instead of only pasting it.
 
-- Based on `anomalyco/hex` branch `dev` at `53164934` (7 November 2026, Hex 3.3.0).
-- The work is on branch `labs-send-to-endpoint`, which is also this fork's
-  default branch (GitHub only offers to run workflows from the default branch).
+- Up to date with `anomalyco/hex` branch `dev` at `84462c9f` (7 November
+  2026, Hex 3.3.0).
+
+## Branches
+
+- **`dev`** mirrors upstream's `dev` and carries nothing of this fork's.
+  Bring it up to date with *Sync fork* on GitHub, or
+  `git push origin upstream/dev:dev`.
+- **`labs-send-to-endpoint`** holds this fork's additions on top of upstream.
+  New upstream commits come in by merging `dev` into it (merges, not
+  rebases, since the branch is public). It is the fork's default branch,
+  because GitHub only offers to run workflows from there, and every fork
+  release is built from it, so a release always has upstream's latest
+  merged changes plus the fork's own.
 
 ## What changed
 
@@ -90,6 +101,11 @@ The URL and token stay the same when Restage restarts.
 Hex's Windows build needs MSVC, CMake and the Vulkan SDK, so it is easiest
 on GitHub Actions:
 
+- **Fork release** (`fork-release.yml`): `gh workflow run fork-release.yml
+  -f number=1` (or *Run workflow* in the Actions tab) builds the Windows
+  installers from `labs-send-to-endpoint` and publishes them as release
+  `v<version>-fork.<number>`. Raise the number for each release of the same
+  Hex version.
 - **Test builds** (`test-builds.yml`, run it by hand from the Actions tab) makes
   `hex-setup-<version>-windows-x64.exe`, in the run's `windows-installers`
   artifact. The installer is unsigned: at the SmartScreen warning choose

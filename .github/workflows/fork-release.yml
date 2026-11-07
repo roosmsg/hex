@@ -1,0 +1,89 @@
+name: Fork release
+
+# This fork's releases: upstream Hex plus the fork's additions (FORK.md), built
+# from the branch it runs on, normally labs-send-to-endpoint. It builds the
+# Windows x64 and ARM64 installers the way Test builds does (unsigned, never
+# updating themselves) and publishes them as a GitHub release tagged
+# v<version>-fork.<number>. Start it with
+#   gh workflow run fork-release.yml -f number=1
+# or "Run workflow" in the Actions tab.
+on:
+  workflow_dispatch:
+    inputs:
+      number:
+        description: "Fork release number for this Hex version (1, 2, ...)"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-release
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      short: ${{ steps.resolve.outputs.short }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - id: resolve
+        run: |
+          {
+            echo "sha=$(git rev-parse HEAD)"
+            echo "short=$(git rev-parse --short=7 HEAD)"
+            echo "version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "hex") | .version')"
+          } >> "$GITHUB_OUTPUT"
+
+  desktop:
+    needs: resolve
+    uses: ./.github/workflows/build-desktop.yml
+    with:
+      sha: ${{ needs.resolve.outputs.sha }}
+      version: ${{ needs.resolve.outputs.version }}
+      test-build: true
+      artifact-prefix: hex-fork-${{ needs.resolve.outputs.short }}
+      retention-days: 7
+
+  installers:
+    needs: [resolve, desktop]
+    uses: ./.github/workflows/windows-installers.yml
+    with:
+      sha: ${{ needs.resolve.outputs.sha }}
+      version: ${{ needs.resolve.outputs.version }}
+      pattern: hex-fork-${{ needs.resolve.outputs.short }}-windows-*
+      digests: hex-fork-${{ needs.resolve.outputs.short }}-windows-x86_64=${{ needs.desktop.outputs.windows-x64-digest }} hex-fork-${{ needs.resolve.outputs.short }}-windows-aarch64=${{ needs.desktop.outputs.windows-arm64-digest }}
+      artifact-name: hex-fork-${{ needs.resolve.outputs.short }}-windows-installers
+      retention-days: 7
+
+  release:
+    needs: [resolve, installers]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.resolve.outputs.sha }}
+          SHORT: ${{ needs.resolve.outputs.short }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+          NUMBER: ${{ inputs.number }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" -R "$GITHUB_REPOSITORY" -n "hex-fork-$SHORT-windows-installers" -D dist
+          ls -la dist
+          tag="v$VERSION-fork.$NUMBER"
+          cat > notes.md <<EOF
+          Hex $VERSION with this fork's additions, built from \`$SHORT\` on \`$GITHUB_REF_NAME\`. What the fork adds, and how to set it up with Restage: [FORK.md]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$SHA/FORK.md).
+
+          **Windows:** run \`hex-setup-$VERSION-windows-x64.exe\` (or \`-arm64\`). Quit Hex from the tray first. The installers are unsigned: at the SmartScreen warning choose *More info*, then *Run anyway*. Settings are kept. This build never updates itself; install the next fork release by hand.
+          EOF
+          gh release create "$tag" dist/* -R "$GITHUB_REPOSITORY" --target "$SHA" \
+            --title "Hex $VERSION (fork $NUMBER)" --notes-file notes.md
