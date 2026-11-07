@@ -1,5 +1,4 @@
-//! `hex labs`: list the features and turn one on or off, from the shell
-//! (`crate::labs` holds the features themselves).
+//! `hex labs`: list the features, turn one on or off, and open its row.
 
 use clap::Subcommand;
 use color_eyre::Result;

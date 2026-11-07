@@ -27,6 +27,7 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 │                                        a stable build never feeds it; with the macOS driver installed it keeps the pane with Uninstall alone
 ├── Playground (Dev) yes  labs.playground                        a Playground sidebar item and ⇧⌘D open the story browser
 ├── Live text       no    labs.live_text                         provisional words beside the HUD while dictating
+├── Failure notices no    labs.failure_notices                   when a dictation fails, its explanation sits beside the HUD for about 6 s, or until the next capture starts
 ├── Live typing     no    labs.live_typing                       (Linux Wayland) provisional words as an underlined input-method preedit in the focused field; the final text is committed there instead of pasted
 ├── Settings search no    labs.settings_search                  a search field atop General filters its rows, Advanced's included
 ├── Live chapters   no    labs.live_chapters           (macOS)   chapters a meeting while it records, boundary pass after Stop
@@ -45,7 +46,7 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Copy dictation only no labs.copy_only (macOS)    a dictation goes to the clipboard and is never pasted; Paste last dictation still pastes (#629)
 ├── Spoken formatting no labs.spoken_formatting      spoken "new line"/"line break", "new paragraph", "open/close quote", "quote … unquote" become line breaks and quotation marks; Spanish "nuevo párrafo", "nueva línea", "abre/cierra comillas", … too (#630, #1040)
 ├── Spoken symbols  no    labs.spoken_symbols          spoken "hashtag", "underscore", "comma", … become symbols joined to their words: "#release", "my_variable", "done, thanks"; Spanish "arroba", "guion bajo", "coma", … too (#678, #1040)
-├── Remove filler words no labs.filler_words          um, umm, uh, uhh, erm, er, ah leave dictations, with no model (#631)
+├── Remove filler words no labs.filler_words          English dictations lose um, umm, uh, uhh, erm, er, ah, with no model (#631)
 ├── Subtitle export no    labs.subtitle_export         (macOS)   hex meetings show --srt|--vtt writes a meeting as timed subtitles (#633)
 ├── Second dictation shortcut no labs.second_dictation_shortcut + second_dictation_hotkey (macOS)
 │                                        another shortcut dictates like the main one (#627); General shows its recorder while on
@@ -84,6 +85,10 @@ Feature             Pane  Toggle (settings.json, hex settings)   On: what it doe
 ├── Import audio    no    labs.meeting_import           (macOS)   Meetings offers Import audio…: a WAV, M4A, MP3, AIFF, or CAF
 │                                        file is decoded locally, transcribed with the selected model, saved as a normal
 │                                        meeting (Speaker turns), exported as Markdown, and given notes as a finished recording
+├── Descriptive meeting file names no labs.meeting_descriptive_filenames (every OS with Meetings)
+│                                        once notes or a rename give a meeting a title, its exported Markdown is renamed
+│                                        in place to <date> <time> <title>.md; a taken name adds " (2)", and the
+│                                        manifest follows so Reveal, Trash, and retention see the new path
 ├── Expire meeting audio separately no labs.expire_meeting_audio (every OS with Meetings)
 │                                        Meetings › Settings adds Keep audio under Keep meetings: finished meetings drop
 │                                        their WAVs on their own schedule (at or beyond Keep meetings it has no effect),
@@ -349,8 +354,18 @@ Remove filler words (`filler-words`, issue 631, every OS): while on,
 `Profiles::process_cancellable` in
 [dictation/processor.rs](../../src/dictation/processor.rs) reads
 `labs::filler_words()` as each dictation's processing starts and runs
-`dictation::filler_words::apply` right after spoken formatting and before the mode's
-corrections, OpenCode rewriting, and transformations. It is rule-based, with
+`dictation::filler_words::strip_if` right after spoken formatting and before
+the mode's corrections, OpenCode rewriting, and transformations. It applies
+only when that dictation's language is exactly English
+(`filler_words::applies_to`): Auto and every other language are left
+untouched, because "er" and "um" are ordinary German and Portuguese words.
+The language comes from the submission, not the setting in force while the
+text is processed: macOS reads the saved transcription selection when the
+dictation is submitted, while Linux and Windows read the selection the
+transcription engine holds at submission, falling back to the saved selection
+when none is held. On Linux and Windows, a dictation finished while an
+in-place model reload for a language change is still running uses the previous
+language for this check. It is rule-based, with
 no model and no added latency. The English fillers "um", "umm", "uh", "uhh",
 "erm", "er", and "ah" are removed as whole words, lowercase or capitalised
 only, so "umbrella", "ahead", "error", "Uhura", "uh-huh", and "ER" stay. The
@@ -359,7 +374,12 @@ close up, no space is left before punctuation, a capitalised filler that
 started a sentence passes its capital to the next word ("Um, so I think"
 becomes "So I think"), and line breaks stay. Dictate without processing,
 meetings, and live text are unchanged, and with the toggle off processing is
-exactly as before. Checks: the tests in
+exactly as before. Checks: `only_english_dictations_apply_the_filter`,
+`enabled_english_dictations_strip_their_fillers`,
+`every_other_language_or_a_disabled_switch_keeps_the_words`,
+`fillers_leave_with_their_commas_and_spaces`,
+`a_filler_that_started_a_sentence_hands_on_its_capital`,
+`line_breaks_are_kept`, and `other_words_are_left_alone` in
 [dictation/filler_words.rs](../../src/dictation/filler_words.rs);
 `filler_words_is_its_own_bit_and_off_by_default` in
 [labs.rs](../../src/labs.rs);
@@ -1326,6 +1346,49 @@ in [tests/panes.rs](../../src/rune_ui/tests/panes.rs);
 pass moving WAVs to a real Trash. The Labs page goldens (`mac-labs`,
 `windows-labs`, `linux-labs`) show the new card.
 
+Descriptive meeting file names (`meeting-descriptive-filenames`, every OS
+with Meetings; its row shows wherever Meetings does): an exported meeting
+Markdown is named `<YYYY-MM-DD HHMM> <title>.md` in the user's meeting folder.
+By default that name is written once at export and kept. While on, after the
+notes are applied to the file (final title and summary), after chapter
+refinement changes the title, and after a user rename, Hex renames it in place
+to the same date and time prefix and the new display title, sanitized exactly
+as export does. The date and time prefix is kept from the file's own name
+while it starts with `YYYY-MM-DD HHMM`, so a timezone change does not shift
+it. It renames only the file the manifest's `export_path` names, only while it
+exists, and only when the name differs; its own file never counts as a
+collision (the same device and inode, so a case-only title change on macOS is
+not one), so a taken name gets the first free `" (2)"` … with no copy or
+overwrite. `std::fs::rename`
+in the same folder is atomic, then the manifest is written as usual, so
+Reveal, Delete to Trash, and retention follow the new path.
+`export_sha256` stays as it was: a rename does not change the bytes, so
+retention still recognizes Hex's copy and still protects one the user edited.
+A missing file, an unchanged name, or a failed rename logs and keeps the old
+path; notes and rename never fail because of it. If Hex stops between the file
+rename and the manifest write, the manifest keeps the old path: Reveal falls
+back to the recording folder and the Markdown stays in the folder untouched.
+A user rename while notes are being written leaves the file name to the notes
+writer, which renames it with the title it applies. Checks:
+`the_file_name_follows_the_title_and_keeps_the_date_and_time`,
+`a_rename_keeps_the_stamp_export_wrote`,
+`only_a_leading_date_and_time_stamp_is_kept`,
+`the_same_file_under_another_spelling_is_not_a_collision`,
+`a_taken_name_gets_the_next_number_without_overwriting`,
+`a_numbered_current_name_stays_when_the_plain_name_is_taken`,
+`a_title_with_no_name_left_falls_back_to_meeting`,
+`a_missing_or_unchanged_name_renames_nothing`, and
+`the_lab_gate_off_leaves_the_file_alone` in
+[meeting/export_name.rs](../../src/meeting/export_name.rs);
+`a_rename_follows_the_title_when_descriptive_file_names_are_on` in
+[tests.rs](../../src/meeting/tests.rs);
+`notes_rename_the_export_only_with_descriptive_file_names` in
+[meeting/notes.rs](../../src/meeting/notes.rs); and
+`meeting_descriptive_filenames_is_its_own_bit_and_off_by_default` in
+[labs.rs](../../src/labs.rs). The Labs page goldens (`mac-labs`, `windows-labs`,
+`linux-labs`) show the new card. Not yet observed: a real macOS end-to-end run
+renaming an exported meeting file.
+
 Meeting platform icons (`meeting-platform-icons`, issue 1290) graduated:
 each recording in the Meetings list always shows its call service's icon, or
 a neutral one ([meetings.md](meetings.md)). `hex labs on|off
@@ -1387,6 +1450,29 @@ vocabulary list itself (rewriting and search), and Linux's Terminal paste.
   [rune_hud/hud_placement.rs](../../src/rune_hud/hud_placement.rs). The line has no golden
   and no `--snap` scene (overlays have none), and nothing headless checks
   how it appears and hides on screen.
+- Failure notices: when a dictation fails, the same click-through plate that
+  carries Live text shows why for about 6 seconds, or until the next capture
+  starts. It reuses the Live text overlay's window, placement
+  (`rune_hud::live_text_place`), and plate styling; the HUD's own coral failure
+  flash and its 600 ms stay exactly as they were. The reason travels with the
+  HUD's failure event, so no old failure is replayed from the event log at
+  launch. Known microphone causes use the same actionable wording as Settings'
+  listener card; any other failure keeps its logged message, truncated to one
+  line. The gate is `labs::failure_notices()` (toggle
+  `labs.failure_notices`, off by default), read when each failure reaches the
+  HUD; with it off, no notice is drawn. Every OS shows a notice for a failed
+  accepted job. Windows and macOS also show one when the microphone fails to
+  open. On Linux, notices cover failed transcriptions only: a microphone-open
+  failure never reaches its HUD today. A job failure that arrives while a newer
+  capture records is skipped. Checks: `a_failure_notice_lasts_six_seconds`,
+  `a_new_capture_dismisses_a_failure_notice_at_once`,
+  `only_a_notices_own_deadline_dismisses_it`,
+  `a_failure_arriving_after_a_queued_words_end_stays_visible`, and
+  `a_failure_notice_takes_the_plate_from_the_live_words` in
+  [rune_ui/live_text.rs](../../src/rune_ui/live_text.rs), and
+  `failure_notices_is_its_own_bit_and_off_by_default` in
+  [labs.rs](../../src/labs.rs). Proof limit: the timing and Labs gate are
+  unit-tested; the overlay was not observed on screen on macOS or Windows.
 - Live typing: on a wlroots-family Wayland session, a hotkey dictation's
   provisional words are an underlined input-method preedit in the focused
   text field, replaced on each update, and its final text is committed

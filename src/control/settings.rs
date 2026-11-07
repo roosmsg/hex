@@ -280,6 +280,11 @@ const KEYS: &[Key] = &[
         "Labs: provisional words beside the HUD while dictating",
     ),
     key(
+        "labs.failure_notices",
+        Kind::Bool,
+        "Labs: when a dictation fails, show why for a few seconds beside the HUD",
+    ),
+    key(
         "labs.live_typing",
         Kind::Bool,
         "Labs: provisional words in the focused text field as an underlined input-method preedit, and the final text typed there instead of pasted (Linux Wayland)",
@@ -488,6 +493,11 @@ const KEYS: &[Key] = &[
         "labs.meeting_import",
         Kind::Bool,
         "Labs: Meetings offers Import audio…, so a local audio file is transcribed and kept as a meeting (macOS)",
+    ),
+    key(
+        "labs.meeting_descriptive_filenames",
+        Kind::Bool,
+        "Labs: an exported meeting's Markdown follows its title once notes or a rename provide one, keeping the date and time",
     ),
     key(
         "labs.expire_meeting_audio",

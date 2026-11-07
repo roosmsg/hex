@@ -52,6 +52,7 @@ impl Feature {
     pub const fn group(self) -> Group {
         match self {
             Self::LiveText
+            | Self::FailureNotices
             | Self::LiveTyping
             | Self::NotchIndicator
             | Self::VocabularyBiasing
@@ -84,6 +85,7 @@ impl Feature {
             | Self::MoreCallApps
             | Self::GnomeMeetingCapsules
             | Self::MeetingImport
+            | Self::MeetingDescriptiveFilenames
             | Self::ExpireMeetingAudio => Group::Meetings,
             Self::Screenshots | Self::AnnotateReplay => Group::Annotate,
             Self::MouseShortcuts

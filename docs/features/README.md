@@ -1746,6 +1746,8 @@ Linux beta                               // not macOS feature parity
 │       ├── Asked by a modifier shortcut -> wait for its portal release + 250 ms
 │       │   (2 s cap without a release); after a hex command -> 250 ms
 │       │   // Hyprland merges held physical modifiers into virtual-keyboard keys (#353)
+│       ├── Shortcut fails partway -> releases the keys it still holds
+│       │   // portal path unit-tested; X11 untested
 │       ├── Compositor offers zwp_virtual_keyboard_manager_v1 and wtype is installed -> wtype
 │       │   └── V sent on evdev KEY_V (placeholder releases first), so Hyprland's
 │       │       binds read Ctrl(+Shift)+V, not Ctrl(+Shift)+Escape (#444)
@@ -2005,6 +2007,10 @@ Linux process                            // maintain.linux-service
 ├── hex start / desktop autostart / hex service -> Same, without the window
 ├── hex dictation|paste-last -> Socket worker -> Listener queue (never the UI thread)
 ├── hex status -> Published status; hex quit / Quit Hex / launcher action -> Drain, exit 0
+├── Any instance stop still draining after 20 s -> _exit before the unit's 30 s TimeoutStopSec
+│   └── A transcription or paste cut by the deadline is lost; checked by unit tests only,
+│       no observed systemd stop
+├── Stop / SIGTERM after a full window queue -> The window's quit is retried until taken
 ├── Open the window -> Maps at 980×760 (min = max), tiling WMs float it -> Resizable from 860×560
 ├── Close the window -> Keep microphone, accepted jobs, model preparation, and HUD
 │   └── Uncommitted shortcut capture -> Cancel and restore the prior listening state
