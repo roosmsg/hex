@@ -1220,6 +1220,10 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
     }
     let now = Instant::now();
     let mut changed = ui.save_drafts(now);
+    #[cfg(target_os = "windows")]
+    {
+        changed |= crate::windows::theme::take_switched();
+    }
     changed |= paste_access::poll(ui);
     // The OpenCode catalog is read only while a pane that uses it shows:
     // Modes, or Meetings › Settings while OpenCode writes the summaries.
@@ -1334,7 +1338,13 @@ fn poll(ui: &mut Ui, clock: f64, tx: &mut Tx) -> bool {
 // View
 
 fn view(ui: &Ui, cx: &mut Cx<Ui>) -> El {
-    let p = Paint::new(cx.system_dark(), cx.env().scale);
+    // On Windows the app mode Hex watches itself; rune's stops following
+    // once its menus force one (windows/theme.rs).
+    #[cfg(target_os = "windows")]
+    let dark = crate::windows::theme::dark().unwrap_or_else(|| cx.system_dark());
+    #[cfg(not(target_os = "windows"))]
+    let dark = cx.system_dark();
+    let p = Paint::new(dark, cx.env().scale);
     // The native title bar takes the window's background, so it follows a
     // system theme switch along with the rest of the window.
     #[cfg(target_os = "windows")]

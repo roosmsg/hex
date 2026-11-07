@@ -184,6 +184,11 @@ pub fn open(event_path: PathBuf, shutdown: &'static AtomicBool, start_hidden: bo
             });
         });
     let window = app.handle();
+    // The window follows a light/dark switch in Windows while it runs.
+    {
+        let window = window.clone();
+        crate::windows::theme::watch(move || window.wake());
+    }
     // Adding the tray icon waits for Explorer, so it runs on its own thread
     // while the overlays install.
     let adding_tray = {
