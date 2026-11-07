@@ -306,16 +306,32 @@ pub fn masked(value: serde_json::Value) -> serde_json::Value {
 
 /// A list set back with masked tokens keeps the tokens it had: an entry whose
 /// token is [`MASKED_TOKEN`] takes the token of the saved endpoint with the
-/// same name, or none.
-pub fn keep_masked_tokens(new: &mut [EndpointSettings], saved: &[EndpointSettings]) {
+/// same name or, renamed, the same URL. One that matches neither is refused
+/// rather than saved without its token.
+pub fn keep_masked_tokens(
+    new: &mut [EndpointSettings],
+    saved: &[EndpointSettings],
+) -> Result<(), String> {
     for entry in new {
-        if entry.token.as_deref() == Some(MASKED_TOKEN) {
-            entry.token = saved
-                .iter()
-                .find(|old| old.name.trim() == entry.name.trim())
-                .and_then(|old| old.token.clone());
+        if entry.token.as_deref() != Some(MASKED_TOKEN) {
+            continue;
         }
+        let same_url = |old: &&EndpointSettings| {
+            old.url.as_deref().map(str::trim) == entry.url.as_deref().map(str::trim)
+        };
+        let old = saved
+            .iter()
+            .find(|old| old.name.trim() == entry.name.trim())
+            .or_else(|| saved.iter().find(same_url))
+            .ok_or_else(|| {
+                format!(
+                    "no saved endpoint has the name or URL of `{}`, so `{MASKED_TOKEN}` keeps no token; give the token itself",
+                    entry.name.trim()
+                )
+            })?;
+        entry.token = old.token.clone();
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -449,8 +465,33 @@ mod tests {
         let shown = masked(serde_json::to_value(&saved).unwrap());
         assert_eq!(shown[0]["token"], MASKED_TOKEN);
         let mut back: Vec<EndpointSettings> = serde_json::from_value(shown).unwrap();
-        keep_masked_tokens(&mut back, &saved);
+        keep_masked_tokens(&mut back, &saved).unwrap();
         assert_eq!(back[0].token.as_deref(), Some("secret"));
+    }
+
+    #[test]
+    fn a_renamed_endpoint_keeps_its_token_by_url_and_a_stranger_is_refused() {
+        let saved = vec![EndpointSettings {
+            name: String::new(),
+            url: Some("http://127.0.0.1:5/command".into()),
+            token: Some("secret".into()),
+            ..Default::default()
+        }];
+        let mut renamed = vec![EndpointSettings {
+            name: "Restage".into(),
+            url: Some("http://127.0.0.1:5/command".into()),
+            token: Some(MASKED_TOKEN.into()),
+            ..Default::default()
+        }];
+        keep_masked_tokens(&mut renamed, &saved).unwrap();
+        assert_eq!(renamed[0].token.as_deref(), Some("secret"));
+        let mut stranger = vec![EndpointSettings {
+            name: "Lights".into(),
+            url: Some("http://127.0.0.1:6/".into()),
+            token: Some(MASKED_TOKEN.into()),
+            ..Default::default()
+        }];
+        assert!(keep_masked_tokens(&mut stranger, &saved).is_err());
     }
 
     #[test]

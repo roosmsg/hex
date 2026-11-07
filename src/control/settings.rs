@@ -963,7 +963,8 @@ pub fn apply(
             crate::dictation::endpoint::keep_masked_tokens(
                 &mut candidate.endpoints,
                 &settings.endpoints,
-            );
+            )
+            .map_err(|why| invalid(name, &why))?;
             crate::dictation::endpoint::check_all(&candidate.endpoints)
                 .map_err(|why| invalid(name, &why))?;
         }
