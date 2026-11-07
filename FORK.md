@@ -14,36 +14,48 @@ as [Restage](https://github.com/roosmsg/Restage), instead of only pasting it.
 
 A new lab in Settings › Labs, in the Output group. It is off by default.
 
-While it is on and a URL is set, every finished dictation is sent as JSON to
-that URL with an HTTP POST. This happens after Hex's own Output steps
-(corrections, transformations). The dictation is no longer pasted, unless
-*Also paste the dictation* is on.
+While it is on, Hex looks at how each finished dictation starts. If it starts
+with an endpoint's **trigger word**, the rest of the dictation is sent as JSON
+to that endpoint with an HTTP POST, after Hex's own Output steps
+(corrections, transformations):
 
-| Setting | `hex settings` key | Default |
-| --- | --- | --- |
-| On or off | `labs.send_to_endpoint` | off |
-| Endpoint URL | `endpoint.url` | none (nothing is sent) |
-| Bearer token | `endpoint.token` | none |
-| JSON body | `endpoint.body` | `{"text": "{text}"}` |
-| Also paste the dictation | `endpoint.paste` | off |
+- "Restage, open research" sends `open research` to the endpoint whose
+  trigger word is *Restage*.
+- A dictation without a trigger word pastes as usual, so normal dictation
+  keeps working with the lab on.
+- An endpoint with an **empty** trigger word takes every dictation no other
+  trigger word claims (that was the lab's first behaviour).
 
-- `{text}` in the body stands for the dictation, escaped for a JSON string.
-- The card shows these fields while the lab is on. Typing is saved as soon as
-  it pauses.
-- From a shell: `hex labs on send-to-endpoint`, then
-  `hex settings set endpoint.url http://127.0.0.1:1234/command`, and so on.
+Each endpoint has these fields; the card has *Add endpoint* and *Remove*:
+
+| Field | Meaning |
+| --- | --- |
+| Name | What the card and the log call it, such as Restage |
+| Trigger word | Said first, it sends the rest here; empty takes every other dictation |
+| Endpoint URL | The http(s) URL that takes the POST |
+| Bearer token | Sent as `Authorization: Bearer …`, if set |
+| JSON body | Default `{"text": "{text}"}`; `{text}` is the words, escaped for JSON |
+| Also paste the dictation | Paste what was sent too; off by default |
+
+- A trigger word matches however speech writes it: "Re-stage", "re stage" and
+  "Restage," all count. The longest matching trigger word wins.
+- From a shell: `hex labs on send-to-endpoint`, and the list as JSON with
+  `hex settings get endpoints` and `hex settings set endpoints '[…]'`. Tokens
+  show as `(set)`; setting the list back with `(set)` keeps the saved token.
+- At most 10 endpoints, no trigger word twice, and only one endpoint without one.
 
 How it behaves:
 
 - **Loopback stays local.** A `localhost` or `127.0.0.1` URL never leaves the
   PC, redirects included. Other hosts go through the system proxy.
-- **The token is never printed.** `hex settings get endpoint.token` and
-  `hex settings list` show only `(set)`.
-- **Logs** name the host and the HTTP status, never the body or the token.
+- **Logs** name the endpoint, its host and the HTTP status, never the body or
+  the token.
 - **A failed send is not silent.** With pasting off, the dictation fails and
   the HUD says so. Paste last dictation still has the text either way.
 - **Printed dictations** (`hex dictation stop --print`) are never sent.
 - The request times out after 10 seconds.
+- A settings file from the first, single-endpoint version keeps its endpoint:
+  it becomes the first in the list, without a trigger word.
 
 It is called "endpoint" rather than "local API" because Hex already has a
 `local_api` module: its own server.
@@ -72,8 +84,9 @@ Restage's local API takes spoken commands at `POST /command`.
    the port and the token.
 2. Set the endpoint URL to `http://127.0.0.1:<port>/command` and the bearer
    token to that token.
-3. Leave the body as it is: `{"text": "{text}"}` is what Restage expects.
-4. Dictate "open research", and Restage starts that workspace.
+3. Set the trigger word to `Restage` and leave the body as it is:
+   `{"text": "{text}"}` is what Restage expects.
+4. Dictate "Restage, open research", and Restage starts that workspace.
 
 The port and token change every time Restage starts, so for now they have to
 be updated after a restart.

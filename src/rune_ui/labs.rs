@@ -202,7 +202,7 @@ pub(super) struct Store {
 impl Store {
     pub(super) fn new(settings: &crate::app_settings::AppSettings) -> Self {
         Self {
-            endpoint: endpoint::Editor::new(&settings.endpoint),
+            endpoint: endpoint::Editor::new(&settings.endpoints),
             ..Self::default()
         }
     }
@@ -719,7 +719,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
             Feature::SendToEndpoint,
             Some(&GLOBE),
             tr("Send to endpoint"),
-            tr("Each dictation goes to a local HTTP endpoint as JSON, for apps that take spoken commands"),
+            tr("Dictations that start with a trigger word go to a local HTTP endpoint as JSON, for apps that take spoken commands"),
         ));
     }
     #[cfg(hex_capture)]

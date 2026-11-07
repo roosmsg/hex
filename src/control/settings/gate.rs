@@ -53,9 +53,7 @@ pub(super) fn unavailable_under(name: &str, policy: crate::policy::Policy) -> Op
     }
     // A `labs.` key is only its feature's switch, so off its OS it does nothing.
     if let Some(feature) = crate::labs::Feature::for_settings_key(name)
-        && (name.starts_with("labs.")
-            || name.starts_with("endpoint.")
-            || name == "capture.replay_hotkey")
+        && (name.starts_with("labs.") || name == "endpoints" || name == "capture.replay_hotkey")
         && !feature.on_this_os()
     {
         return Some(ControlError::new(

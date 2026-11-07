@@ -115,8 +115,9 @@ pub enum Feature {
     MeetingImport,
     QuitClosesWindow,
     ExpireMeetingAudio,
-    /// Each dictation is POSTed as JSON to a local HTTP endpoint
-    /// (`endpoint.*`), for apps that take spoken commands (Windows).
+    /// A dictation that starts with an endpoint's trigger word is POSTed as
+    /// JSON to that local HTTP endpoint (`endpoints`), for apps that take
+    /// spoken commands (Windows).
     SendToEndpoint,
 }
 
@@ -334,7 +335,7 @@ impl Feature {
         if key == "capture.replay_hotkey" {
             return Some(Self::AnnotateReplay);
         }
-        if key.starts_with("endpoint.") {
+        if key == "endpoints" {
             return Some(Self::SendToEndpoint);
         }
         Self::ALL
@@ -557,7 +558,7 @@ impl Feature {
             Self::PauseBrowser => "Also pause the browser while dictating, with Pause media",
             Self::ShareShortcut => "Let apps such as Discord see the dictation shortcut too",
             Self::SendToEndpoint => {
-                "POST each dictation as JSON to a local HTTP endpoint (endpoint.url, endpoint.token, endpoint.body) instead of pasting it, unless endpoint.paste is on"
+                "A dictation that starts with an endpoint's trigger word goes to that local HTTP endpoint as JSON (endpoints); others paste as usual"
             }
             Self::UnloadIdle => {
                 "Free the speech model's memory after a while unused (labs.unload_idle_minutes); the next dictation reloads it"

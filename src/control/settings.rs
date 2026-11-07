@@ -46,8 +46,6 @@ enum Kind {
     },
     Choice(&'static [&'static str]),
     Text,
-    /// Text that `hex settings get` and `list` show only as set or not: a token.
-    Secret,
     Shortcut(HotkeySlot),
     Path,
     Json,
@@ -61,7 +59,6 @@ impl Kind {
             Self::Integer { .. } => "integer",
             Self::Choice(_) => "choice",
             Self::Text => "text",
-            Self::Secret => "secret",
             Self::Shortcut(_) => "shortcut",
             Self::Path => "path",
             Self::Json => "json",
@@ -636,27 +633,13 @@ const KEYS: &[Key] = &[
     key(
         "labs.send_to_endpoint",
         Kind::Bool,
-        "Labs: POST each dictation as JSON to the local HTTP endpoint in endpoint.* instead of pasting it (Windows)",
-    ),
-    optional(
-        "endpoint.url",
-        Kind::Text,
-        "Labs › Send to endpoint: the http(s) URL that takes the POST; none (the default) sends nothing",
-    ),
-    optional(
-        "endpoint.token",
-        Kind::Secret,
-        "Labs › Send to endpoint: sent as a bearer token; none (the default) sends no Authorization header",
+        "Labs: a dictation that starts with an endpoint's trigger word goes to that local HTTP endpoint as JSON (endpoints; Windows)",
     ),
     key(
-        "endpoint.body",
-        Kind::Text,
-        "Labs › Send to endpoint: the JSON body, with {text} standing for the dictation",
-    ),
-    key(
-        "endpoint.paste",
-        Kind::Bool,
-        "Labs › Send to endpoint: also paste the dictation as usual; off, the endpoint takes the paste's place",
+        "endpoints",
+        Kind::Json,
+        "Labs › Send to endpoint: a list of {name, trigger, url, token, body, paste}; body uses {text} for the words, \
+         an empty trigger takes every other dictation; tokens show as (set), and (set) keeps the saved one",
     ),
     optional(
         "ui_language",
@@ -890,11 +873,7 @@ fn value_of(key: &Key, json: &Value) -> SettingValue {
             _ => Value::Null,
         },
         Kind::Choice(_) if NUMERIC_CHOICES.contains(&key.key) => Value::String(raw.to_string()),
-        // A token is never printed back, only whether there is one.
-        Kind::Secret => match raw {
-            Value::String(ref secret) if !secret.is_empty() => Value::String("(set)".into()),
-            other => other,
-        },
+        Kind::Json if key.key == "endpoints" => crate::dictation::endpoint::masked(raw),
         _ => raw,
     };
     SettingValue {
@@ -979,6 +958,14 @@ pub fn apply(
             if volume <= 0.0 {
                 candidate.sound_effect_volume = settings.sound_effect_volume;
             }
+        }
+        "endpoints" => {
+            crate::dictation::endpoint::keep_masked_tokens(
+                &mut candidate.endpoints,
+                &settings.endpoints,
+            );
+            crate::dictation::endpoint::check_all(&candidate.endpoints)
+                .map_err(|why| invalid(name, &why))?;
         }
         "double_tap_lock" if !candidate.double_tap_lock => candidate.double_tap_only = false,
         "double_tap_only" if candidate.double_tap_only => {
@@ -1245,19 +1232,7 @@ fn parse(key: &Key, raw: &str, shortcuts: &ShortcutRules) -> Result<Value, Contr
                 Value::String((*choice).into())
             })
         }
-        Kind::Text | Kind::Secret => {
-            if name == "endpoint.url"
-                && let Err(why) = crate::dictation::endpoint::check_url(trimmed)
-            {
-                return Err(invalid(name, &why));
-            }
-            if name == "endpoint.body"
-                && let Err(why) = crate::dictation::endpoint::check_body(trimmed)
-            {
-                return Err(invalid(name, &why));
-            }
-            Ok(Value::String(raw.into()))
-        }
+        Kind::Text => Ok(Value::String(raw.into())),
         Kind::Path => {
             let path = match trimmed.strip_prefix("~/") {
                 Some(rest) => crate::app_paths::home_dir()

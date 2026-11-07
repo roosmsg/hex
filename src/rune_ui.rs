@@ -1038,8 +1038,8 @@ impl Ui {
             if !drafts.vocabulary && service.vocabulary != self.settings.vocabulary {
                 self.vocabulary.reload(&service.vocabulary);
             }
-            if !drafts.endpoint && service.endpoint != self.settings.endpoint {
-                self.lab_store.endpoint.reload(&service.endpoint);
+            if !drafts.endpoint && service.endpoints != self.settings.endpoints {
+                self.lab_store.endpoint.reload(&service.endpoints);
             }
             self.settings = service.clone();
             self.settings_changed();

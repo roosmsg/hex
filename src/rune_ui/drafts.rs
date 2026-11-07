@@ -39,7 +39,7 @@ impl Ui {
         Drafts {
             modes: modes.dictation_processing != settings.dictation_processing,
             vocabulary: self.vocabulary.project() != settings.vocabulary,
-            endpoint: endpoint.endpoint != settings.endpoint,
+            endpoint: endpoint.endpoints != settings.endpoints,
         }
     }
 

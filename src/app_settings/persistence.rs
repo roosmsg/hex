@@ -372,7 +372,10 @@ fn decode(data: &[u8]) -> (AppSettings, bool) {
     let mut repaired = false;
     loop {
         match serde_path_to_error::deserialize::<_, AppSettings>(&value) {
-            Ok(settings) => return (settings, repaired),
+            Ok(mut settings) => {
+                settings.adopt_legacy_endpoint();
+                return (settings, repaired);
+            }
             Err(error) => {
                 let path: Vec<_> = error.path().iter().collect();
                 warn(&error.path().to_string(), &error.inner().to_string());

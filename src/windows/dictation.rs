@@ -110,9 +110,9 @@ pub struct WindowsDictationConfig {
     pub fallback_to_default_device: bool,
     /// Terminal paste: Ctrl+Shift+V instead of Ctrl+V.
     pub paste_with_shift: bool,
-    /// Labs › Send to endpoint while it is on with a URL: read by the
+    /// Labs › Send to endpoint's endpoints while it is on: read by the
     /// output worker as each dictation finishes, replaced on every save.
-    pub endpoint: Arc<RwLock<Option<crate::dictation::endpoint::Endpoint>>>,
+    pub endpoint: Arc<RwLock<Vec<crate::dictation::endpoint::Endpoint>>>,
     /// Where the listener reports a model change that failed to load.
     pub swap_failures: Option<mpsc::Sender<crate::transcription::local_transcriber::SwapFailed>>,
     /// What the tray asks of the listener.
@@ -170,9 +170,9 @@ impl WindowsDictationConfig {
             transformations: Arc::new(crate::personal_commands::TransformationClient::default()),
             fallback_to_default_device: true,
             paste_with_shift: settings.paste_with_shift,
-            endpoint: Arc::new(RwLock::new(
-                crate::dictation::endpoint::Endpoint::from_settings(settings),
-            )),
+            endpoint: Arc::new(RwLock::new(crate::dictation::endpoint::from_settings(
+                settings,
+            ))),
             swap_failures: None,
             commands: None,
         }
@@ -357,7 +357,7 @@ pub fn run(
             let next_config = WindowsDictationConfig::from_settings(&next);
             paste_with_shift.store(next_config.paste_with_shift, Ordering::Relaxed);
             *endpoint.write().unwrap_or_else(|error| error.into_inner()) =
-                crate::dictation::endpoint::Endpoint::from_settings(&next);
+                crate::dictation::endpoint::from_settings(&next);
             let next_shortcuts = Shortcuts {
                 hotkey: next_config.hotkey,
                 paste_last_hotkey: next_config.paste_last_hotkey,
@@ -888,7 +888,7 @@ fn process_dictation_job(
     last_dictation: &Mutex<Option<String>>,
     mode_runtime: &RwLock<crate::dictation::modes::ModeRuntime>,
     transformations: &crate::personal_commands::TransformationClient,
-    endpoint: &RwLock<Option<crate::dictation::endpoint::Endpoint>>,
+    endpoint: &RwLock<Vec<crate::dictation::endpoint::Endpoint>>,
 ) -> JobResult {
     let started = Instant::now();
     let printed = job.print.is_some();
@@ -930,35 +930,43 @@ fn process_dictation_job(
             return Err("text replacements produced empty output".into());
         }
         // A printed dictation goes to its caller alone. Otherwise Labs ›
-        // Send to endpoint takes the dictation in the paste's place (or
-        // beside it, with endpoint.paste); a failed send with no paste
-        // fails the dictation, so the HUD says so instead of dropping it.
-        let endpoint = if printed {
-            None
+        // Send to endpoint routes it by its trigger word and sends the rest
+        // in the paste's place (or beside it, with the endpoint's paste); a
+        // failed send with no paste fails the dictation, so the HUD says so
+        // instead of dropping it. Unrouted, it pastes as usual.
+        let endpoints = if printed {
+            Vec::new()
         } else {
             endpoint
                 .read()
                 .unwrap_or_else(|error| error.into_inner())
                 .clone()
         };
-        if let Some(endpoint) = &endpoint {
-            match endpoint.send(&text) {
+        let routed = crate::dictation::endpoint::route(&endpoints, &text);
+        let mut pasted_text = text.clone();
+        if let Some((endpoint, words)) = &routed {
+            if words.is_empty() {
+                return Err(format!("{}: nothing after the trigger word", endpoint.name));
+            }
+            match endpoint.send(words) {
                 Ok(status) => tracing::info!(
+                    endpoint = %endpoint.name,
                     host = crate::net::host(&endpoint.url),
                     status,
                     "sent the dictation to the endpoint"
                 ),
                 Err(error) if endpoint.paste => {
-                    tracing::warn!(%error, "could not send the dictation to the endpoint");
+                    tracing::warn!(endpoint = %endpoint.name, %error, "could not send the dictation to the endpoint");
                 }
-                Err(error) => return Err(format!("endpoint: {error}")),
+                Err(error) => return Err(format!("{}: {error}", endpoint.name)),
             }
+            pasted_text = words.clone();
         }
-        if !printed && endpoint.as_ref().is_none_or(|endpoint| endpoint.paste) {
+        if !printed && routed.as_ref().is_none_or(|(endpoint, _)| endpoint.paste) {
             paster
                 .as_mut()
                 .map_err(|error| format!("{error:#}"))?
-                .paste(&text)
+                .paste(&pasted_text)
                 .map_err(|error| format!("{error:#}"))?;
         }
         // Paste Last still has it, pasted or sent.

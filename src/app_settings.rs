@@ -308,8 +308,13 @@ pub struct AppSettings {
     pub experimental: ExperimentalSettings,
     /// The Labs features' own switches (`crate::labs`).
     pub labs: LabsSettings,
-    /// Labs › Send to endpoint's URL, token, body, and paste (Windows).
-    pub endpoint: EndpointSettings,
+    /// Labs › Send to endpoint's endpoints, each with its trigger word (Windows).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub endpoints: Vec<EndpointSettings>,
+    /// The single endpoint of the lab's first version, read once and moved
+    /// into `endpoints` (`adopt_legacy_endpoint`); never written.
+    #[serde(rename = "endpoint", skip_serializing)]
+    pub legacy_endpoint: Option<EndpointSettings>,
     /// Labs › Screenshots' shortcut and folder (macOS).
     pub screenshots: ScreenshotSettings,
     /// Start listening when Hex opens (Windows and Linux, where the
@@ -436,7 +441,8 @@ impl Default for AppSettings {
             capture_from_other_build: None,
             experimental: ExperimentalSettings::default(),
             labs: LabsSettings::default(),
-            endpoint: EndpointSettings::default(),
+            endpoints: Vec::new(),
+            legacy_endpoint: None,
             screenshots: ScreenshotSettings::default(),
             enable_on_launch: true,
             paste_with_shift: false,
