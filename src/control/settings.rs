@@ -1516,6 +1516,10 @@ mod tests {
                 opencode_model: Some("anthropic/claude-haiku".into()),
                 ..Default::default()
             },
+            endpoints: vec![crate::app_settings::EndpointSettings {
+                url: Some("http://127.0.0.1:1/command".into()),
+                ..Default::default()
+            }],
             ..Default::default()
         };
         let json = serde_json::to_value(settings).unwrap();
