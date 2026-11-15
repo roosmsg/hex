@@ -42,6 +42,19 @@ impl Group {
         }
     }
 
+    /// Its English header in Settings › Labs.
+    pub const fn title(self) -> &'static str {
+        match self {
+            Self::Dictation => "Dictation",
+            Self::Output => "Output",
+            Self::History => "History",
+            Self::Meetings => "Meetings",
+            Self::Annotate => "Annotate",
+            Self::Shortcuts => "Shortcuts",
+            Self::Models => "Models",
+        }
+    }
+
     pub fn from_id(id: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|group| group.id() == id)
     }
@@ -56,24 +69,44 @@ impl Feature {
             | Self::LiveTyping
             | Self::NotchIndicator
             | Self::VocabularyBiasing
+            | Self::ScreenVocabulary
             | Self::PauseBrowser
+            | Self::KeepMicrophoneOpen
             | Self::SkipPauses
             | Self::VoiceFilter
             | Self::HideMenuBarIcon
             | Self::QuitClosesWindow
             | Self::SettingsSearch
+            | Self::Appearance
+            | Self::ReleaseNotesLink
+            | Self::SpeakersOnly
             | Self::Playground => Group::Dictation,
             Self::SmartSpacing
             | Self::SpokenFormatting
             | Self::SpokenSymbols
             | Self::FillerWords
+            | Self::CleanUpWithAppleIntelligence
             | Self::KeepOnClipboard
             | Self::CopyOnly
+            | Self::ReturnToApp
             | Self::GnomeClipboardRestore
+            | Self::TypedText
             | Self::TerminalPaste
             | Self::SendToEndpoint
-            | Self::OutputFixes => Group::Output,
-            Self::KeepRecordings | Self::HistoryStats | Self::RecentDictations => Group::History,
+            | Self::OutputFixes
+            | Self::OpenCodeInWsl
+            | Self::ApiProcessing
+            | Self::ApiTimestamps
+            | Self::ApiBrowserAccess
+            | Self::PrintStart
+            | Self::ShellCompletions
+            | Self::YoloMode
+            | Self::CursorContext
+            | Self::VoicePrompt => Group::Output,
+            Self::KeepRecordings
+            | Self::HistoryStats
+            | Self::HistoryMultiSelect
+            | Self::RecentDictations => Group::History,
             Self::Meetings
             | Self::LiveChapters
             | Self::SubtitleExport
@@ -86,22 +119,33 @@ impl Feature {
             | Self::GnomeMeetingCapsules
             | Self::MeetingImport
             | Self::MeetingDescriptiveFilenames
-            | Self::ExpireMeetingAudio => Group::Meetings,
-            Self::Screenshots | Self::AnnotateReplay => Group::Annotate,
+            | Self::MeetingNotesFile
+            | Self::ExpireMeetingAudio
+            | Self::CalendarMenu => Group::Meetings,
+            Self::Screenshots
+            | Self::AnnotateReplay
+            | Self::GnomeAnnotate
+            | Self::CopyCaptureZip => Group::Annotate,
             Self::MouseShortcuts
             | Self::SecondDictationShortcut
+            | Self::MoreDictationShortcuts
+            | Self::TerminalPasteShortcut
             | Self::SidedChords
             | Self::TapOrHold
-            | Self::RestoreShortcutDefault
+            | Self::DoubleTapModifiers
             | Self::StandaloneSpecialKeys
             | Self::SectionKeyAlone
-            | Self::ShareShortcut => Group::Shortcuts,
+            | Self::ShareShortcut
+            | Self::CapsLockDictation
+            | Self::PauseMenu => Group::Shortcuts,
             Self::KeyboardModelSwitching
+            | Self::AppModelSwitching
             | Self::UnloadIdle
             | Self::PickerSortFilter
             | Self::BenchmarkDetails
             | Self::PickerActiveFirst
             | Self::ModelInPlace
+            | Self::KQuantModels
             | Self::PickerDownloaded
             | Self::ParakeetUltra => Group::Models,
         }

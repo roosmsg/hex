@@ -103,6 +103,8 @@ pub(super) struct Meeting {
     pub(super) export_error: Option<String>,
     pub(super) notes_error: Option<String>,
     pub(super) live_error: Option<String>,
+    /// The microphone was digitally silent for part of this recording.
+    pub(super) microphone_warning: Option<crate::meeting::TrackWarning>,
     pub(super) transcript: Transcript,
     pub(super) chapters: Vec<Chapter>,
     /// Imported from an audio file (Labs › Import audio): its one track is
@@ -645,6 +647,7 @@ fn recordings(ui: &Ui, p: Paint, layer: &mut Vec<El>, action: El) -> (Vec<El>, E
             "meetings-error",
             tr("Meetings could not be loaded."),
             error,
+            Tone::Danger,
         ));
     }
     if let Some(error) = &pane.runtime_error {
@@ -849,11 +852,10 @@ fn detail(ui: &Ui, p: Paint, meeting: &Meeting, layer: &mut Vec<El>) -> El {
         clock_offset(meeting.duration_ms),
     ];
     meta_line.extend(meeting.app.clone());
-    if !meeting.status.is_active()
-        && let Some(kept_for) = meeting.kept_for
-    {
-        meta_line.push(tr_fill("Deleted after {}", tr(kept_for)));
-    }
+    let retention = meeting
+        .kept_for
+        .filter(|_| !meeting.status.is_active())
+        .map(|kept_for| ld::meta_note(p, "retention", &tr_fill("Deleted after {}", tr(kept_for))));
     let mut meta: Vec<El> = status_tag(p, meeting.status, pane.stop_pending)
         .into_iter()
         .collect();
@@ -884,7 +886,16 @@ fn detail(ui: &Ui, p: Paint, meeting: &Meeting, layer: &mut Vec<El>) -> El {
     ];
     let mut body = col().key("detail-body").gap(24.0).pb(8.0);
     for (key, title, error) in errors.into_iter().flatten() {
-        body = body.child(error_panel(p, key, title, error));
+        body = body.child(error_panel(p, key, title, error, Tone::Danger));
+    }
+    if !active && meeting.microphone_warning == Some(crate::meeting::TrackWarning::DigitalSilence) {
+        body = body.child(error_panel(
+            p,
+            "microphone-silence",
+            tr("Microphone is silent"),
+            tr("Your microphone was silent for part of this call. Another app may have been using it with voice processing, so your side may be missing."),
+            Tone::Warning,
+        ));
     }
     if let Some(summary) = &meeting.summary {
         let summary = summary.trim();
@@ -938,6 +949,7 @@ fn detail(ui: &Ui, p: Paint, meeting: &Meeting, layer: &mut Vec<El>) -> El {
         .grow(1.0)
         .shrink()
         .child(ld::card_header(title, meta, actions))
+        .children(retention)
         .children(confirm)
         .child(ld::card_scroll_sticky(
             p,
@@ -1133,7 +1145,13 @@ fn transcript(p: Paint, meeting: &Meeting, stop_pending: bool) -> El {
     };
     let turns = match &meeting.transcript {
         Transcript::Unavailable(error) => {
-            return error_panel(p, "transcript-error", tr("Transcript unavailable."), error);
+            return error_panel(
+                p,
+                "transcript-error",
+                tr("Transcript unavailable."),
+                error,
+                Tone::Danger,
+            );
         }
         Transcript::Loaded(turns) => turns,
     };

@@ -1,5 +1,6 @@
 //! Text fields whose typing is saved once it pauses: Output's modes, the
-//! vocabulary, and Labs › Send to endpoint's fields. Each editor projects
+//! vocabulary, Labs › Voice prompt's phrase, Browser access's origins, and
+//! Send to endpoint's fields. Each editor projects
 //! its text into the settings; a draft is what differs from the saved ones.
 
 use std::time::{Duration, Instant};
@@ -15,6 +16,8 @@ pub(super) const DRAFT_DELAY: Duration = Duration::from_millis(250);
 pub(super) struct Drafts {
     pub(super) modes: bool,
     pub(super) vocabulary: bool,
+    pub(super) phrase: bool,
+    pub(super) origins: bool,
     /// Labs › Send to endpoint's fields.
     pub(super) endpoint: bool,
 }
@@ -25,6 +28,8 @@ impl Ui {
         let mut candidate = self.settings.clone();
         self.modes.project(&mut candidate);
         candidate.vocabulary = self.vocabulary.project();
+        self.lab_store.project_phrase(&mut candidate);
+        self.lab_store.project_origins(&mut candidate);
         self.lab_store.endpoint.project(&mut candidate);
         candidate
     }
@@ -39,6 +44,8 @@ impl Ui {
         Drafts {
             modes: modes.dictation_processing != settings.dictation_processing,
             vocabulary: self.vocabulary.project() != settings.vocabulary,
+            phrase: self.lab_store.phrase_dirty(settings),
+            origins: self.lab_store.origins_dirty(settings),
             endpoint: endpoint.endpoints != settings.endpoints,
         }
     }

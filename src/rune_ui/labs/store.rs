@@ -25,7 +25,10 @@ pub(in crate::rune_ui) fn search_field(ui: &Ui, p: Paint) -> El {
         .leading_icon(p.k.glyph.search)
         .on_edit(|ui: &mut Ui| &mut ui.lab_store.search);
     if !ui.lab_store.search.text.is_empty() {
-        field = field.clear_button();
+        field = field.clear_button().on_action(|ui: &mut Ui, tx: &mut Tx| {
+            tx.settle();
+            ui.lab_store.search.clear();
+        });
     }
     field.build(p.k).key("labs-search")
 }
@@ -56,7 +59,7 @@ pub(in crate::rune_ui) fn tabs(ui: &Ui, p: Paint) -> El {
 }
 
 /// The page under the title bar: the chips, then the scrolling cards.
-pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint) -> El {
+pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
     let rows = shown(ui);
     let store = &ui.lab_store;
     let query = store.query();
@@ -78,7 +81,7 @@ pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint) -> El {
                     "featured",
                     featured
                         .into_iter()
-                        .map(|row| card(ui, p, row, true, true))
+                        .map(|row| card(ui, p, row, true, true, layer))
                         .collect(),
                 ));
         }
@@ -125,7 +128,7 @@ pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint) -> El {
                         &format!("grid-row{index}"),
                         pair_rows
                             .iter()
-                            .map(|row| card(ui, p, row, is_new(row), false))
+                            .map(|row| card(ui, p, row, is_new(row), false, layer))
                             .collect(),
                     ));
                 }
@@ -145,8 +148,9 @@ pub(in crate::rune_ui) fn page(ui: &Ui, p: Paint) -> El {
 
 /// Whether `row` matches a lowercase search.
 fn matches(row: &Row, query: &str) -> bool {
+    let note = row.note.as_deref().unwrap_or("");
     query.is_empty()
-        || [row.title, row.about, group::name(row.group)]
+        || [row.title, row.about, note, group::name(row.group)]
             .iter()
             .any(|copy| copy.to_lowercase().contains(query))
 }
@@ -314,9 +318,11 @@ fn tile(p: Paint, icon: &'static Icon, size: f32) -> El {
 }
 
 /// One lab as a card: tile, name and tags on one line, up to two lines of
-/// description, its switch, and while on any settings of its own.
-/// `featured` cards sit under New in Labs, so they carry no New tag.
-fn card(ui: &Ui, p: Paint, entry: &Row, new: bool, featured: bool) -> El {
+/// description, its switch, and while on any settings of its own. A note
+/// under the description may run to three lines, so a caveat such as where
+/// the text goes is never cut short. `featured` cards sit under New in Labs,
+/// so they carry no New tag.
+fn card(ui: &Ui, p: Paint, entry: &Row, new: bool, featured: bool, layer: &mut Vec<El>) -> El {
     let c = &p.k.c;
     let lab = entry.lab;
     let mut tags = Vec::new();
@@ -358,7 +364,16 @@ fn card(ui: &Ui, p: Paint, entry: &Row, new: bool, featured: bool) -> El {
                 .color(p.muted())
                 .max_lines(2),
         );
-    if let Some(extras) = extras(ui, p, entry) {
+    if let Some(note) = &entry.note {
+        copy = copy.child(
+            text(note.clone())
+                .key("note")
+                .font(DESCRIPTION)
+                .color(p.muted())
+                .max_lines(3),
+        );
+    }
+    if let Some(extras) = extras(ui, p, entry, layer) {
         copy = copy.child(extras.mt(8.0));
     }
     let key = if featured {
@@ -377,7 +392,21 @@ fn card(ui: &Ui, p: Paint, entry: &Row, new: bool, featured: bool) -> El {
         .child(tile(p, entry.icon, TILE))
         .child(copy)
         .fill(c.bg_base)
-        .border(p.hair, c.border_weak)
+        .border(
+            p.hair,
+            if flashing(ui, lab.id()) {
+                c.border_focus
+            } else {
+                c.border_weak
+            },
+        )
+}
+
+/// Whether a Labs link just named this lab.
+fn flashing(ui: &Ui, id: &str) -> bool {
+    ui.lab_store
+        .flash
+        .is_some_and(|(linked, at)| linked == id && at.elapsed() < super::FLASH)
 }
 
 const CARD_PADDING: f32 = 12.0;
@@ -438,4 +467,97 @@ fn feedback_button(p: Paint, key: &str, variant: ButtonVariant) -> El {
         })
         .build_small_push(p.k)
         .key(key)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use crate::rune_ui::{AppSettings, SCENES, Service, deep_link, offscreen, view};
+    use rune::text::TextSystem;
+    use rune::{Env, Key, KeyEvent, Mods, Runtime};
+
+    #[test]
+    fn labs_search_clears_across_the_titlebar_button_and_keeps_typing() {
+        // Unlike the Linux golden suite, this runs on macOS too, with the
+        // real pane_header's window_drag region. The native band overlaps
+        // the upper half of the search button.
+        for dark in [false, true] {
+            for fraction in [0.05, 0.5, 0.95] {
+                for from_link in [false, true] {
+                    let mut ui = Ui::with(AppSettings::default(), Service::Fixture(Vec::new()));
+                    SCENES
+                        .iter()
+                        .find(|(name, _)| *name == "mac-labs")
+                        .unwrap()
+                        .1(&mut ui);
+                    for group in crate::labs::Group::ALL {
+                        ui.settings.labs.groups.insert(group.id().to_string(), true);
+                    }
+                    let text =
+                        TextSystem::new(rune_theme_opencode::FONTS, rune_theme_opencode::FAMILIES);
+                    let mut rt =
+                        offscreen::runtime(ui, view, (980.0, 4000.0), Env::new(dark, 2.0), text);
+                    rt.set_native_titlebar_band(28.0);
+                    settle(&mut rt);
+                    if from_link {
+                        let target = deep_link::parse("hex://labs?search=live%20text", "hex")
+                            .unwrap()
+                            .unwrap();
+                        rt.update(|ui, tx| deep_link::open(ui, target, tx));
+                        settle(&mut rt);
+                    }
+                    let (x, y) = rt.find("labs-search/value/input").unwrap();
+                    rt.pointer_down(x, y);
+                    rt.pointer_up(x, y);
+                    if !from_link {
+                        rt.key(KeyEvent {
+                            key: Key::Text("live text".into()),
+                            mods: Mods::default(),
+                        });
+                    }
+                    settle(&mut rt);
+                    assert_eq!(rt.state.lab_store.search.text, "live text");
+                    assert!(rt.find("lab-card-live-text").is_some());
+                    assert!(rt.find("lab-card-mouse-shortcuts").is_none());
+                    let button = rt
+                        .elements()
+                        .into_iter()
+                        .find(|e| e.path.ends_with("labs-search/action"))
+                        .unwrap()
+                        .rect;
+                    assert!(button[1] < 28.0 && button[1] + button[3] > 28.0);
+                    let (x, y) = (
+                        button[0] + button[2] / 2.0,
+                        button[1] + button[3] * fraction,
+                    );
+                    rt.pointer_down(x, y);
+                    assert!(
+                        rt.take_titlebar_action().is_none(),
+                        "clear must not drag at y={y}"
+                    );
+                    rt.pointer_up(x, y);
+                    settle(&mut rt);
+                    assert!(
+                        rt.state.lab_store.search.text.is_empty(),
+                        "clear at y={y}, dark={dark}, link={from_link}"
+                    );
+                    assert!(rt.find("lab-card-mouse-shortcuts").is_some());
+                    assert!(rt.state.lab_store.search.focused);
+                    rt.key(KeyEvent {
+                        key: Key::Text("mouse".into()),
+                        mods: Mods::default(),
+                    });
+                    settle(&mut rt);
+                    assert_eq!(rt.state.lab_store.search.text, "mouse");
+                    assert!(rt.find("lab-card-live-text").is_none());
+                    assert!(rt.find("lab-card-mouse-shortcuts").is_some());
+                }
+            }
+        }
+    }
+
+    fn settle(rt: &mut Runtime<Ui>) {
+        rt.settle_all();
+        rt.frame(0.0);
+    }
 }

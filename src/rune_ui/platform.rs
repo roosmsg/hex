@@ -64,6 +64,12 @@ pub(super) struct Capabilities {
     /// Input-source changes can operate the installed-model picker (macOS,
     /// Windows, and Linux on X11; Wayland has no general layout protocol).
     pub(super) keyboard_model_switching: bool,
+    /// A mode's speech model and language follow the frontmost application
+    /// (macOS and Windows; Labs › Switch model with app).
+    pub(super) app_model_switching: bool,
+    /// Labs › Transform typed text: run Output steps on text already typed in
+    /// the focused field and replace it (Linux).
+    pub(super) typed_text: bool,
 }
 
 impl Capabilities {
@@ -82,6 +88,8 @@ impl Capabilities {
         fun: true,
         modifier_sides: false,
         keyboard_model_switching: true,
+        app_model_switching: false,
+        typed_text: true,
     };
 
     pub(super) const MACOS: Self = Self {
@@ -99,6 +107,8 @@ impl Capabilities {
         fun: true,
         modifier_sides: true,
         keyboard_model_switching: true,
+        app_model_switching: true,
+        typed_text: false,
     };
 
     pub(super) const WINDOWS: Self = Self {
@@ -116,6 +126,8 @@ impl Capabilities {
         fun: false,
         modifier_sides: true,
         keyboard_model_switching: true,
+        app_model_switching: true,
+        typed_text: false,
     };
 
     /// This OS's capabilities, with the rows its window host decides.
@@ -164,7 +176,7 @@ impl CalendarView {
         Self {
             access: CalendarAccess::FullAccess,
             calendars: vec![
-                calendar("work", "Work", "kit@anoma.ly"),
+                calendar("work", "Work", "alex@example.com"),
                 calendar("home", "Home", "iCloud"),
                 calendar("birthdays", "Birthdays", "Other"),
             ],
@@ -175,7 +187,7 @@ impl CalendarView {
                     Some(CallProvider::GoogleMeet),
                 ),
                 meeting("Rune review", "Today · 4:00 PM", Some(CallProvider::Zoom)),
-                meeting("1:1 with Dax", "Tomorrow · 10:00 AM", None),
+                meeting("1:1 with Sam", "Tomorrow · 10:00 AM", None),
             ],
             connecting: false,
             error: None,
@@ -310,6 +322,10 @@ pub(super) struct PlatformState {
     /// A Wayland desktop without data-control (GNOME): a paste can't put
     /// the clipboard back unless Labs › Restore clipboard on GNOME is on.
     pub(super) clipboard_unrestorable: bool,
+    /// This Wayland desktop offers no input-method protocol, so Labs › Live
+    /// typing can't work here (GNOME, KDE): its card says so. Fixtures keep
+    /// it false.
+    pub(super) live_typing_unsupported: bool,
     /// A scene's state: [`Self::setup_status`] reports `permissions` on
     /// every OS rather than asking this computer.
     preview: bool,
@@ -401,6 +417,7 @@ impl PlatformState {
             relaunch_failed: false,
             paste: None,
             clipboard_unrestorable: false,
+            live_typing_unsupported: false,
             preview: false,
             developer: false,
             accessibility_renamed: false,
@@ -871,12 +888,26 @@ const DIFFERENCES: &[(&str, Difference)] = &[
         "modifier_sides",
         Difference::Impossible("X11 grabs and the Wayland portal see no sides"),
     ),
+    (
+        "app_model_switching",
+        Difference::Pending(
+            "the Linux service has no foreground-mode model switch; X11 could watch the \
+             focused app the way mode matching already does",
+        ),
+    ),
+    (
+        "typed_text",
+        Difference::OsPattern(
+            "the feature reads and replaces text in the focused Linux app; macOS and Windows \
+             would need their own adapters",
+        ),
+    ),
 ];
 
 impl Capabilities {
     /// Every capability by name. Destructuring makes a new capability a
     /// compile error here until it is named.
-    pub(super) fn fields(self) -> [(&'static str, bool); 13] {
+    pub(super) fn fields(self) -> [(&'static str, bool); 15] {
         let Self {
             os: _,
             meetings,
@@ -892,6 +923,8 @@ impl Capabilities {
             fun,
             modifier_sides,
             keyboard_model_switching,
+            app_model_switching,
+            typed_text,
         } = self;
         [
             ("meetings", meetings),
@@ -907,6 +940,8 @@ impl Capabilities {
             ("fun", fun),
             ("modifier_sides", modifier_sides),
             ("keyboard_model_switching", keyboard_model_switching),
+            ("app_model_switching", app_model_switching),
+            ("typed_text", typed_text),
         ]
     }
 }

@@ -22,9 +22,15 @@ impl Feature {
             Self::VocabularyBiasing => {
                 "Bias Parakeet transcription toward your vocabulary; rewriting and search use it either way"
             }
+            Self::ScreenVocabulary => {
+                "Window names and terms become temporary vocabulary. Read locally, never saved. Parakeet needs Vocabulary biasing, and a dictation with terms runs after release instead of from the live stream."
+            }
             Self::TerminalPaste => "Paste with Ctrl+Shift+V, for apps that ignore Ctrl+V",
             Self::KeyboardModelSwitching => {
                 "Changing the keyboard language switches the speech model and language"
+            }
+            Self::AppModelSwitching => {
+                "Each dictation mode's speech model and language follow the app in front"
             }
             Self::MouseShortcuts => "Record mouse buttons as shortcuts",
             Self::PauseBrowser => "Also pause the browser while dictating, with Pause media",
@@ -35,24 +41,36 @@ impl Feature {
             Self::UnloadIdle => {
                 "Free the speech model's memory after a while unused (labs.unload_idle_minutes); the next dictation reloads it"
             }
-            Self::RestoreShortcutDefault => {
-                "Offer Restore default next to Paste last dictation's shortcut"
+            Self::KeepMicrophoneOpen => {
+                "With Turn off the mic when not dictating on, keep the microphone open for a while after each dictation (labs.keep_microphone_open_seconds), so the next one starts at once"
             }
             Self::KeepOnClipboard => {
                 "Leave the dictation on the clipboard after pasting instead of restoring what was there"
             }
             Self::CopyOnly => "Put the dictation on the clipboard instead of pasting it",
+            Self::ReturnToApp => {
+                "If another app comes to the front while you dictate, switch back to the app you started in before pasting"
+            }
             Self::SpokenFormatting => {
                 "Turn spoken \"new line\", \"new paragraph\", and \"open/close quote\" into line breaks and quotation marks"
             }
             Self::FillerWords => {
                 "Remove filler words such as um and uh from dictations, without an AI model"
             }
+            Self::CleanUpWithAppleIntelligence => {
+                "Fix clearly misheard words and spoken self-corrections in each dictation, on this Mac with Apple Intelligence"
+            }
             Self::SubtitleExport => {
                 "Export meeting transcripts as SRT or VTT subtitles with hex meetings show"
             }
             Self::SecondDictationShortcut => {
                 "Another shortcut that dictates like the main one (second_dictation_hotkey), such as a key on an external keyboard"
+            }
+            Self::MoreDictationShortcuts => {
+                "Up to four more shortcuts that dictate like the main one, each with its own binding and activation mode (extra_dictation_hotkeys)"
+            }
+            Self::TerminalPasteShortcut => {
+                "Another dictation shortcut that always pastes with Ctrl+Shift+V (terminal_paste_hotkey)"
             }
             Self::SmartSpacing => "Add a space before a dictation pasted right after a word",
             Self::SpokenSymbols => {
@@ -66,6 +84,9 @@ impl Feature {
             }
             Self::TapOrHold => {
                 "In Toggle mode, hold the shortcut to dictate until you let go; a short tap still starts and stops"
+            }
+            Self::DoubleTapModifiers => {
+                "Double-tap shortcut mode accepts any shortcut without a key, such as Option, Globe, or ⌃⌥"
             }
             Self::BenchmarkDetails => {
                 "Show each model's raw error rate, benchmark, and source in the Local transcription picker"
@@ -81,6 +102,9 @@ impl Feature {
             }
             Self::HistoryStats => {
                 "Add a Stats button to History that shows a summary of your retained dictations, with hex history stats"
+            }
+            Self::HistoryMultiSelect => {
+                "Shift-click, Cmd-click (Ctrl on Windows and Linux) or drag to select several dictations, then copy or delete them together"
             }
             Self::RecentDictations => {
                 "Copy one of your last five dictations from the menu bar, under Paste Last Dictation"
@@ -98,16 +122,23 @@ impl Feature {
             Self::ModelInPlace => {
                 "Add a speech model file and use it where it is, without copying it, so several accounts can share one file"
             }
+            Self::KQuantModels => {
+                "Add your own speech model files that use Q6_K, Q5_K, or Q4_K weights. They are smaller than Q8_0 but Hex hasn't verified them, so accuracy may vary."
+            }
             Self::PickerDownloaded => {
                 "Show only downloaded speech models in the picker, with the space they take"
             }
             Self::SectionKeyAlone => {
-                "Use the § key, left of 1 on ISO keyboards, alone as a shortcut; Hex takes § from every app while it's bound"
+                "Use the key left of 1 on ISO keyboards, § or a dead key such as ^, alone as a shortcut; Hex takes it from every app while it's bound"
             }
             Self::KeepRecordings => {
                 "Keep the audio of dictations saved to History, so you can transcribe them again with another model"
             }
             Self::SettingsSearch => "Find any setting in General with a search field",
+            Self::Appearance => "Use light or dark for the main window instead of the system's",
+            Self::ReleaseNotesLink => {
+                "Show a link to this build's release notes in the sidebar footer"
+            }
             Self::HideMenuBarIcon => {
                 "Hide Hex's menu bar icon; shortcuts keep working, and opening Hex again shows Settings"
             }
@@ -116,6 +147,9 @@ impl Feature {
             }
             Self::GnomeClipboardRestore => {
                 "Put the previous clipboard back after a paste on GNOME Wayland, through the XWayland clipboard while XWayland is running"
+            }
+            Self::TypedText => {
+                "Run the focused app's Output steps on the text already typed in the focused field and replace it (typed_text_hotkey)"
             }
             Self::MeetingNotesVocabulary => {
                 "Meeting titles and summaries read your vocabulary, so names are spelled the way you wrote them"
@@ -129,8 +163,14 @@ impl Feature {
             Self::GnomeMeetingCapsules => {
                 "Show the meeting capsules (recording offer, recording indicator) floating over your call on GNOME Wayland, through XWayland while XWayland is running"
             }
+            Self::GnomeAnnotate => {
+                "Show Annotate's recording capsule and ink over your screen on GNOME Wayland, through XWayland while XWayland is running; Esc can't stop drawing there, so use the capsule's pen button or let go of a held Annotate key"
+            }
             Self::Screenshots => {
                 "Take a screenshot of an area or a window with a shortcut (Command-Shift-4 by default): copied, saved, and shown in the corner"
+            }
+            Self::CopyCaptureZip => {
+                "A finished capture copies as one zip file, without video or audio."
             }
             Self::FollowLiveTranscript => {
                 "While a meeting records, the transcript scrolls to the newest line. Scroll up to read earlier text; scroll back to the bottom to follow again."
@@ -147,12 +187,52 @@ impl Feature {
             Self::MeetingDescriptiveFilenames => {
                 "Rename exported meeting Markdown to the meeting's title once notes or a rename provide one, keeping the date and time"
             }
+            Self::MeetingNotesFile => {
+                "Write the meeting's notes to their own file next to the transcript, sharing its name, with a link back to the transcript"
+            }
             Self::QuitClosesWindow => {
                 "⌘Q closes the Settings window instead of quitting Hex; dictation keeps running, and the menu bar icon still quits"
             }
             Self::ExpireMeetingAudio => {
                 "Choose how long to keep meeting audio. Transcripts, notes, and summaries follow Keep meetings."
             }
+            Self::CapsLockDictation => {
+                "Press Caps Lock to start and stop dictation; its light shows when Hex records and transcribes"
+            }
+            Self::OpenCodeInWsl => {
+                "Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker; looking for it can start WSL"
+            }
+            Self::ApiProcessing => {
+                "Let apps using Hex's local API ask for transcripts with your Global mode's corrections, rewrite, and transformations applied"
+            }
+            Self::ApiTimestamps => {
+                "Let apps using Hex's local API ask for each segment's or word's start and end times in the transcript, as the speech model heard them"
+            }
+            Self::ApiBrowserAccess => {
+                "Let web pages from the origins you list call Hex's local API from the browser; every request still needs the API token"
+            }
+            Self::SpeakersOnly => {
+                "Apply \"While dictating\" only when sound plays through speakers; headphones are left alone"
+            }
+            Self::PauseMenu => {
+                "Add Pause Hex to the menu bar. While paused, Hex ignores its shortcuts so other apps get the keys"
+            }
+            Self::CalendarMenu => {
+                "Show your next calendar meetings in the menu bar menu. Choosing one with a call link opens it; that click doesn't start a recording (macOS, with Meetings on and a calendar connected)"
+            }
+            Self::PrintStart => {
+                "Let hex dictation start --print hand the transcript to the command that started it, however the recording ends"
+            }
+            Self::VoicePrompt => {
+                "Say \"rewrite this\" in a dictation, then an instruction; Hex applies it with the mode's OpenCode model"
+            }
+            Self::CursorContext => {
+                "The mode's OpenCode rewrite uses the text around the cursor to spell names and terms right and fit where it pastes. That text goes to the mode's model, which may be a cloud provider; password fields are never read"
+            }
+            Self::ShellCompletions => {
+                "Print a completion script for bash, zsh, fish, elvish, or PowerShell with hex completions <shell>"
+            }
+            Self::YoloMode => "Send dictations automatically",
         }
     }
 }
