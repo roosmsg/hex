@@ -491,6 +491,7 @@ impl WindowsDesktopHost {
         let (commands, command_receiver) = mpsc::channel();
         let event_path = self.event_path.clone();
         let selection = self.runtime_selection();
+        crate::dictation::endpoint::apply(&self.settings);
         let config = crate::windows::dictation::WindowsDictationConfig {
             swap_failures: Some(swap_failure_sender),
             commands: Some(command_receiver),

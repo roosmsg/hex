@@ -187,6 +187,7 @@ pub fn run(shutdown: &'static AtomicBool) -> Result<()> {
             crate::labs::log_launch();
             let settings = crate::app_settings::AppSettings::load()?;
             let history = crate::history::History::open_default(settings.history_retention)?;
+            crate::dictation::endpoint::apply(&settings);
             let config = crate::windows::dictation::WindowsDictationConfig {
                 device,
                 history: Some(history),

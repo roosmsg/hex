@@ -58,6 +58,50 @@ pub fn from_settings(settings: &AppSettings) -> Vec<Endpoint> {
         .collect()
 }
 
+/// The endpoints the output worker routes with: [`from_settings`] of the
+/// settings the listener last applied.
+static ACTIVE: std::sync::RwLock<Vec<Endpoint>> = std::sync::RwLock::new(Vec::new());
+
+/// Adopts `settings`' endpoints, as the listener starts and on every save.
+pub fn apply(settings: &AppSettings) {
+    *ACTIVE.write().unwrap_or_else(|error| error.into_inner()) = from_settings(settings);
+}
+
+/// Sends a finished dictation to the endpoint whose name it starts with,
+/// and answers what is left to paste: all of `text` when no endpoint takes
+/// it (or it is `printed`), the words after the name when that endpoint also
+/// pastes, and `None` when the endpoint takes it in the paste's place. A
+/// failed send with no paste is an error, so the HUD says so instead of
+/// dropping the words.
+pub fn deliver(text: &str, printed: bool) -> Result<Option<String>, String> {
+    if printed {
+        return Ok(Some(text.to_owned()));
+    }
+    let endpoints = ACTIVE
+        .read()
+        .unwrap_or_else(|error| error.into_inner())
+        .clone();
+    let Some((endpoint, words)) = route(&endpoints, text) else {
+        return Ok(Some(text.to_owned()));
+    };
+    if words.is_empty() {
+        return Err(format!("{}: nothing after the name", endpoint.name));
+    }
+    match endpoint.send(&words) {
+        Ok(status) => tracing::info!(
+            endpoint = %endpoint.name,
+            host = crate::net::host(&endpoint.url),
+            status,
+            "sent the dictation to the endpoint"
+        ),
+        Err(error) if endpoint.paste => {
+            tracing::warn!(endpoint = %endpoint.name, %error, "could not send the dictation to the endpoint");
+        }
+        Err(error) => return Err(format!("{}: {error}", endpoint.name)),
+    }
+    Ok(endpoint.paste.then_some(words))
+}
+
 impl Endpoint {
     fn from_entry(entry: &EndpointSettings) -> Option<Self> {
         let url = entry.url.as_deref()?.trim();

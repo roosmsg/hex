@@ -1196,7 +1196,7 @@ with the new row.
 Send to endpoint (`send-to-endpoint`, Windows): while on, the Windows output
 worker (`process_dictation_job` in
 [windows/dictation.rs](../../src/windows/dictation.rs)) routes each finished
-dictation, once the Output steps have run, by `dictation::endpoint::route`:
+dictation, once the Output steps have run, by `dictation::endpoint::deliver`:
 a dictation that starts with an endpoint's name goes to that endpoint
 without the name ("Restage, open portfolio" sends "open portfolio"); the
 longest matching name wins, and a name matches however speech splits or
