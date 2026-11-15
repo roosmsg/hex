@@ -108,7 +108,9 @@ on GitHub Actions:
   -f number=1` (or *Run workflow* in the Actions tab) builds the Windows
   installers from `labs-send-to-endpoint` and publishes them as release
   `v<version>-fork.<number>`. Raise the number for each release of the same
-  Hex version.
+  Hex version. It builds Windows only: it passes `windows-only` to
+  `build-desktop.yml`, which skips the Linux jobs (a fork addition to that
+  upstream file; upstream's own builds leave it off).
 - **Test builds** (`test-builds.yml`, run it by hand from the Actions tab) makes
   `hex-setup-<version>-windows-x64.exe`, in the run's `windows-installers`
   artifact. The installer is unsigned: at the SmartScreen warning choose

@@ -50,6 +50,7 @@ jobs:
       test-build: true
       artifact-prefix: hex-fork-${{ needs.resolve.outputs.short }}
       retention-days: 7
+      windows-only: true
 
   installers:
     needs: [resolve, desktop]
