@@ -15,24 +15,25 @@ use serde::{Deserialize, Serialize};
 use crate::dictation::vocabulary::{VocabularyEntry, serialize_saved};
 use crate::transcription::models::{TranscriptionModelId, TranscriptionSelection};
 
-mod browser_origins;
 #[cfg(hex_capture)]
 mod capture;
 mod dictation_processing;
 mod endpoint;
 mod extra_shortcuts;
 mod hotkeys;
+mod keyboard_model;
 mod labs;
 mod meeting_folder;
 mod meetings;
+mod microphone_key;
 mod persistence;
 mod screenshots;
 #[cfg(target_os = "linux")]
 pub(crate) use persistence::LaunchLoad;
 pub(crate) use persistence::LaunchNote;
 mod shortcut_repair;
+mod typing_speed;
 
-pub use browser_origins::{normalize_browser_origins, parse_browser_origins};
 #[cfg(hex_capture)]
 pub use capture::*;
 pub use dictation_processing::{
@@ -41,12 +42,24 @@ pub use dictation_processing::{
 pub use endpoint::*;
 pub use extra_shortcuts::*;
 pub use hotkeys::*;
+pub use keyboard_model::*;
 pub use labs::*;
 pub use meeting_folder::default_meeting_output_folder;
 pub use meetings::*;
 #[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
+pub(crate) use microphone_key::{MicrophoneKey, MicrophoneKeyTap};
+#[cfg_attr(not(target_os = "macos"), allow(unused_imports))]
 pub use screenshots::{
-    ScreenshotSettings, screenshot_hotkey, screenshot_record_hotkey, screenshot_settings,
+    ExportSize, MaxResolution, RECORD_MICROPHONE_DEFAULT, RECORD_MICROPHONE_NONE, RecordKind,
+    RecordingQuality, ScreenshotSettings, screenshot_hotkey, screenshot_record_hotkey,
+    screenshot_settings,
+};
+#[cfg(target_os = "macos")]
+pub use screenshots::{
+    pending_screenshot_choices, queue_screenshot_choice, settle_screenshot_choices,
+};
+pub use typing_speed::{
+    DEFAULT_TYPING_WPM, MAX_TYPING_WPM, MIN_TYPING_WPM, clamp as clamp_typing_wpm,
 };
 
 const DEFAULT_RECORDING_DUCK_VOLUME: f32 = 0.2;
@@ -71,9 +84,13 @@ static MEETING_INDICATOR_CORNER: AtomicU8 = AtomicU8::new(MeetingIndicatorCorner
 static MEETING_RETENTION: AtomicU8 = AtomicU8::new(RETENTION_UNSET);
 /// [`MeetingRetention::encode`]d; [`RETENTION_UNSET`] until settings apply.
 static MEETING_AUDIO_RETENTION: AtomicU8 = AtomicU8::new(RETENTION_UNSET);
+static MEETING_STOP_WHEN_CALL_ENDS: AtomicBool = AtomicBool::new(false);
+static MEETING_DESCRIPTIVE_FILENAMES: AtomicBool = AtomicBool::new(false);
+static MEETING_NOTES_FILE: AtomicBool = AtomicBool::new(false);
 const RETENTION_UNSET: u8 = u8::MAX;
 static MEETING_OUTPUT_FOLDER: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 static MEETING_PROVIDERS: OnceLock<RwLock<Vec<MeetingProviderChoice>>> = OnceLock::new();
+static MEETING_DEFAULT_POLICY: AtomicU8 = AtomicU8::new(MeetingPolicy::Ask as u8);
 static CALENDAR_SETTINGS: OnceLock<RwLock<CalendarSettings>> = OnceLock::new();
 static MICROPHONE_POLICY: AtomicU8 = AtomicU8::new(0);
 static CUSTOM_TRANSFORMATIONS_SELECTED: AtomicBool = AtomicBool::new(false);
@@ -323,6 +340,13 @@ pub struct AppSettings {
     )]
     pub retired_voice_action: Option<serde_json::Value>,
     pub history_retention: crate::history::HistoryRetention,
+    /// Words a minute the person types, which Dictation stats' time saved
+    /// compares against what they dictated; clamped to 10–200.
+    #[serde(
+        default = "typing_speed::default_wpm",
+        deserialize_with = "typing_speed::deserialize"
+    )]
+    pub typing_wpm: u32,
     pub meetings: MeetingSettings,
     #[cfg(hex_capture)]
     pub capture: CaptureSettings,
@@ -398,6 +422,8 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    MEETING_LABS_SETTINGS_MIGRATION,
+    labs::YEARLY_STATS_MERGE_MIGRATION,
 ];
 #[cfg(not(hex_capture))]
 const MIGRATIONS: &[&str] = &[
@@ -405,6 +431,8 @@ const MIGRATIONS: &[&str] = &[
     ANOMALY_IDENTITY_MIGRATION,
     MEETING_RETENTION_DEFAULT_MIGRATION,
     MEETING_SUMMARIES_MIGRATION,
+    MEETING_LABS_SETTINGS_MIGRATION,
+    labs::YEARLY_STATS_MERGE_MIGRATION,
 ];
 /// Scrawl's settings were read into `capture` once. Left out of
 /// `MIGRATIONS` so new settings import them too.
@@ -420,6 +448,10 @@ const MEETING_RETENTION_DEFAULT_MIGRATION: &str = "meeting-retention-default";
 /// Summarize with Apple Intelligence and Summarize with OpenCode became one
 /// choice, `meetings.summaries`.
 const MEETING_SUMMARIES_MIGRATION: &str = "meeting-summaries-choice";
+/// Stop when the call ends, Descriptive meeting file names, Separate
+/// notes file, and Expire meeting audio separately became Meetings ›
+/// Settings rows: their switches were read into `meetings.*` once.
+const MEETING_LABS_SETTINGS_MIGRATION: &str = "meeting-labs-settings";
 
 fn deserialize_retired_value<'de, D>(
     deserializer: D,
@@ -437,7 +469,7 @@ impl Default for AppSettings {
             retired_commands_enabled: None,
             release_microphone_while_idle: false,
             sound_effects: true,
-            sound_effect_volume: 0.5,
+            sound_effect_volume: crate::feedback::DEFAULT_VOLUME,
             sound_theme: crate::feedback::SoundSet::default(),
             microphone: None,
             avoid_bluetooth_microphone: true,
@@ -464,6 +496,7 @@ impl Default for AppSettings {
             dictation_processing: DictationProcessingSettings::default(),
             retired_voice_action: None,
             history_retention: crate::history::HistoryRetention::default(),
+            typing_wpm: DEFAULT_TYPING_WPM,
             meetings: MeetingSettings::default(),
             #[cfg(hex_capture)]
             capture: CaptureSettings::default(),
@@ -486,45 +519,6 @@ impl Default for AppSettings {
             vocabulary_boost: crate::dictation::vocabulary::VocabularyBoost::default(),
             migrations: MIGRATIONS.iter().map(|id| id.to_string()).collect(),
             text_replacements: Vec::new(),
-        }
-    }
-}
-
-/// macOS input-source IDs mapped to the model and language they select. An
-/// absent entry means "Don't switch"; this never changes the model merely
-/// because dictation starts.
-#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(default)]
-pub struct KeyboardModelSwitching {
-    pub enabled: bool,
-    pub mappings: std::collections::BTreeMap<String, KeyboardModelChoice>,
-}
-
-/// What one input source selects: a model and a language it supports.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct KeyboardModelChoice {
-    pub model: TranscriptionModelId,
-    pub language: String,
-}
-
-impl KeyboardModelChoice {
-    /// The picker's downloadable models only; Apple Speech is never mapped.
-    pub fn validate(&self) -> Result<()> {
-        let selection = TranscriptionSelection {
-            model: self.model,
-            language: self.language.clone(),
-        };
-        // An import stays mapped while it is missing or off, like the
-        // saved selection; switching to it then runs the default model.
-        if self.model.is_labs_gated() {
-            return crate::transcription::models::validate_saved(&selection);
-        }
-        let model = crate::transcription::models::validate(&selection)?;
-        match model.runtime {
-            crate::transcription::models::ModelRuntime::Gguf(_) => Ok(()),
-            crate::transcription::models::ModelRuntime::AppleSpeech => {
-                Err(eyre!("{} can't be switched to by input source", model.name))
-            }
         }
     }
 }
@@ -846,6 +840,12 @@ impl AppSettings {
             MeetingRetention::encode(self.meetings.audio_retention),
             Ordering::Release,
         );
+        MEETING_STOP_WHEN_CALL_ENDS.store(self.meetings.stop_when_call_ends, Ordering::Release);
+        MEETING_DESCRIPTIVE_FILENAMES.store(
+            self.meetings.export.descriptive_filenames,
+            Ordering::Release,
+        );
+        MEETING_NOTES_FILE.store(self.meetings.export.notes_file, Ordering::Release);
         *MEETING_OUTPUT_FOLDER
             .get_or_init(Default::default)
             .write()
@@ -855,6 +855,7 @@ impl AppSettings {
             .get_or_init(Default::default)
             .write()
             .unwrap_or_else(|error| error.into_inner()) = self.meetings.providers.clone();
+        MEETING_DEFAULT_POLICY.store(self.meetings.default_policy as u8, Ordering::Release);
         *CALENDAR_SETTINGS
             .get_or_init(Default::default)
             .write()
@@ -950,6 +951,8 @@ impl AppSettings {
                 .push(MEETING_RETENTION_DEFAULT_MIGRATION.into());
         }
         self.migrate_meeting_summaries();
+        self.migrate_meeting_labs();
+        self.migrate_yearly_stats_lab();
         #[cfg(hex_capture)]
         if !self.has_migration(ANNOTATE_DEFAULT_MIGRATION) {
             self.capture.enabled = true;
@@ -970,6 +973,27 @@ impl AppSettings {
         }
         self.meetings.summarize_with_apple_intelligence = None;
         self.meetings.summarize_with_opencode = None;
+    }
+
+    /// The four meeting labs that became Meetings › Settings rows carry
+    /// their switches over once; a separate audio retention stays only if
+    /// its lab was on, since it applied only then.
+    pub(super) fn migrate_meeting_labs(&mut self) {
+        if !self.has_migration(MEETING_LABS_SETTINGS_MIGRATION) {
+            let labs = &self.labs;
+            self.meetings.stop_when_call_ends |= labs.stop_when_call_ends == Some(true);
+            self.meetings.export.descriptive_filenames |=
+                labs.meeting_descriptive_filenames == Some(true);
+            self.meetings.export.notes_file |= labs.meeting_notes_file == Some(true);
+            if labs.expire_meeting_audio != Some(true) {
+                self.meetings.audio_retention = None;
+            }
+            self.migrations.push(MEETING_LABS_SETTINGS_MIGRATION.into());
+        }
+        self.labs.stop_when_call_ends = None;
+        self.labs.meeting_descriptive_filenames = None;
+        self.labs.meeting_notes_file = None;
+        self.labs.expire_meeting_audio = None;
     }
 
     fn has_migration(&self, id: &str) -> bool {
@@ -1130,7 +1154,7 @@ impl AppSettings {
         self.capture.enabled
     }
 
-    /// Labs › Annotate 15 s replay's shortcut while it takes effect: macOS 27+,
+    /// Labs › Annotate last 15 seconds shortcut while it takes effect: macOS 27+,
     /// Annotate and the Lab on, bound, and sharing no key with another active
     /// shortcut.
     #[cfg(hex_capture)]
@@ -1229,7 +1253,7 @@ pub enum HotkeySlot {
     TypedText,
     #[cfg(hex_capture)]
     Capture,
-    /// Labs › Annotate 15 s replay shortcut (macOS 27+).
+    /// Labs › Annotate last 15 seconds shortcut (macOS 27+).
     #[cfg(hex_capture)]
     CaptureReplay,
     /// Labs › Second dictation shortcut.
@@ -1399,6 +1423,19 @@ pub fn runtime_hotkeys() -> RuntimeHotkeys {
         hotkeys.capture_replay = None;
     }
     hotkeys
+}
+
+/// Tests install the shortcuts the listener matches, without a settings file.
+#[cfg(test)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn install_test_hotkeys(hotkeys: RuntimeHotkeys) {
+    *HOTKEYS
+        .get_or_init(Default::default)
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = AppliedHotkeys {
+        runtime: hotkeys,
+        settings: None,
+    };
 }
 
 pub fn dictation_hotkey() -> RuntimeHotkey {
@@ -1575,6 +1612,86 @@ mod tests {
         settings.apply_one_time_migrations_with(|_| true);
         assert_eq!(settings.meetings.summaries, Off);
         assert!(AppSettings::default().has_migration(MEETING_SUMMARIES_MIGRATION));
+    }
+
+    /// The meeting labs that became Meetings › Settings rows carry their
+    /// switches over once; audio retention stays only with its lab on.
+    #[test]
+    fn retired_meeting_labs_become_meeting_settings_once() {
+        let migrated = |json: &str| {
+            let mut settings: AppSettings = serde_json::from_str(json).unwrap();
+            settings.apply_one_time_migrations_with(|_| true);
+            assert!(settings.has_migration(MEETING_LABS_SETTINGS_MIGRATION));
+            let written = serde_json::to_value(&settings).unwrap();
+            for retired in [
+                "stop_when_call_ends",
+                "meeting_descriptive_filenames",
+                "meeting_notes_file",
+                "expire_meeting_audio",
+            ] {
+                assert!(written["labs"].get(retired).is_none(), "{retired}");
+            }
+            settings.meetings
+        };
+        let all_on = migrated(
+            r#"{"labs":{"stop_when_call_ends":true,"meeting_descriptive_filenames":true,"meeting_notes_file":true,"expire_meeting_audio":true},"meetings":{"audio_retention":"week"}}"#,
+        );
+        assert!(all_on.stop_when_call_ends);
+        assert!(all_on.export.descriptive_filenames);
+        assert!(all_on.export.notes_file);
+        assert_eq!(all_on.audio_retention, Some(MeetingRetention::Week));
+
+        let lab_off = migrated(
+            r#"{"labs":{"expire_meeting_audio":false},"meetings":{"audio_retention":"week"}}"#,
+        );
+        assert!(!lab_off.stop_when_call_ends);
+        assert!(!lab_off.export.descriptive_filenames);
+        assert!(!lab_off.export.notes_file);
+        assert_eq!(lab_off.audio_retention, None);
+
+        // Later choices stick.
+        let mut settings: AppSettings = serde_json::from_str(
+            r#"{"labs":{"stop_when_call_ends":true},"meetings":{"audio_retention":"day"},"migrations":["meeting-labs-settings"]}"#,
+        )
+        .unwrap();
+        settings.apply_one_time_migrations_with(|_| true);
+        assert!(!settings.meetings.stop_when_call_ends);
+        assert_eq!(
+            settings.meetings.audio_retention,
+            Some(MeetingRetention::Day)
+        );
+        assert!(AppSettings::default().has_migration(MEETING_LABS_SETTINGS_MIGRATION));
+    }
+
+    /// The retired Yearly stats lab is part of Dictation stats now: a saved
+    /// switch turns Dictation stats on once, and is never written back.
+    #[test]
+    fn retired_yearly_stats_becomes_dictation_stats_once() {
+        let migrated = |json: &str| {
+            let mut settings: AppSettings = serde_json::from_str(json).unwrap();
+            settings.apply_one_time_migrations_with(|_| true);
+            assert!(settings.has_migration(labs::YEARLY_STATS_MERGE_MIGRATION));
+            let written = serde_json::to_value(&settings).unwrap();
+            assert!(
+                written["labs"].get("yearly_stats").is_none(),
+                "the retired switch is never written"
+            );
+            assert!(settings.labs.yearly_stats.is_none());
+            settings.labs
+        };
+        assert!(migrated(r#"{"labs":{"yearly_stats":true}}"#).history_stats);
+        assert!(!migrated(r#"{"labs":{"yearly_stats":false}}"#).history_stats);
+        assert!(!migrated("{}").history_stats);
+
+        // A later choice sticks, even beside a stale retired switch.
+        let mut settings: AppSettings = serde_json::from_str(
+            r#"{"labs":{"history_stats":false,"yearly_stats":true},"migrations":["yearly-stats-merge"]}"#,
+        )
+        .unwrap();
+        settings.apply_one_time_migrations_with(|_| true);
+        assert!(!settings.labs.history_stats);
+        assert!(settings.labs.yearly_stats.is_none());
+        assert!(AppSettings::default().has_migration(labs::YEARLY_STATS_MERGE_MIGRATION));
     }
 
     #[test]
@@ -1816,11 +1933,11 @@ mod tests {
         settings.capture.replay_hotkey = Some(replay.clone());
         settings.screenshots.record_hotkey = Some(record.clone());
         if cfg!(target_os = "macos") {
-            // Annotate's checks count the saved record shortcut with
-            // Annotate and the Lab off, so neither can take it when it's
-            // turned on.
-            assert!(settings.hotkey_in_use(HotkeySlot::Capture, &record));
-            assert!(settings.hotkey_in_use(HotkeySlot::CaptureReplay, &record));
+            // With the Lab off, every Mac's saved record shortcut doesn't
+            // hold Annotate's keys; turning the Lab on clears one Annotate
+            // took.
+            assert!(!settings.hotkey_in_use(HotkeySlot::Capture, &record));
+            assert!(!settings.hotkey_in_use(HotkeySlot::CaptureReplay, &record));
             // The record check counts Annotate's saved shortcuts the same
             // way.
             assert!(settings.hotkey_in_use(HotkeySlot::ScreenshotRecord, &settings.capture.hotkey));
@@ -1830,11 +1947,11 @@ mod tests {
             assert!(!settings.hotkey_in_use(HotkeySlot::RawDictation, &record));
             settings.labs.screenshots = true;
             assert!(!settings.hotkey_in_use(HotkeySlot::RawDictation, &record));
+            // With the Lab on, Annotate's checks count it, Annotate on or off.
+            assert!(settings.hotkey_in_use(HotkeySlot::Capture, &record));
+            assert!(settings.hotkey_in_use(HotkeySlot::CaptureReplay, &record));
             settings.capture.enabled = true;
             assert!(settings.hotkey_in_use(HotkeySlot::RawDictation, &record));
-            // Annotate's check still counts the record key with the Lab off.
-            settings.labs.screenshots = false;
-            assert!(settings.hotkey_in_use(HotkeySlot::Capture, &record));
         } else {
             assert!(!settings.hotkey_in_use(HotkeySlot::Capture, &record));
             assert!(
@@ -1884,7 +2001,9 @@ mod tests {
 
         let (saved, loaded) = load(replay.clone(), Some(replay.clone()));
         if cfg!(target_os = "macos") {
-            assert!(saved.hotkey_in_use(HotkeySlot::CaptureReplay, &replay));
+            let mut lab = saved.clone();
+            lab.labs.screenshots = true;
+            assert!(lab.hotkey_in_use(HotkeySlot::CaptureReplay, &replay));
         }
         assert_eq!(loaded.screenshots.record_hotkey, None);
         assert!(!loaded.hotkey_in_use(HotkeySlot::CaptureReplay, &replay));
@@ -2468,7 +2587,11 @@ mod tests {
         assert!(saved["meetings"].get("audio_retention").is_none());
 
         // A chosen audio retention survives a save and load.
-        fs::write(&dir.path, r#"{"meetings": {"audio_retention": "week"}}"#).unwrap();
+        fs::write(
+            &dir.path,
+            r#"{"meetings": {"audio_retention": "week"}, "migrations": ["meeting-labs-settings"]}"#,
+        )
+        .unwrap();
         let settings = AppSettings::load_from(&dir.path).unwrap();
         assert_eq!(
             settings.meetings.audio_retention,
@@ -2606,6 +2729,27 @@ mod tests {
         let serialized = serde_json::to_value(settings).unwrap();
 
         assert!(serialized.get("prevent_system_sleep").is_none());
+    }
+
+    #[test]
+    fn a_missing_typing_speed_loads_forty_and_a_saved_one_is_clamped() {
+        let missing: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(missing.typing_wpm, crate::app_settings::DEFAULT_TYPING_WPM);
+
+        let slow: AppSettings = serde_json::from_str(r#"{"typing_wpm":5}"#).unwrap();
+        assert_eq!(slow.typing_wpm, crate::app_settings::MIN_TYPING_WPM);
+        let fast: AppSettings = serde_json::from_str(r#"{"typing_wpm":500}"#).unwrap();
+        assert_eq!(fast.typing_wpm, crate::app_settings::MAX_TYPING_WPM);
+        let saved: AppSettings = serde_json::from_str(r#"{"typing_wpm":65}"#).unwrap();
+        assert_eq!(saved.typing_wpm, 65);
+
+        let directory = TestSettingsDir::new("typing-wpm");
+        std::fs::write(&directory.path, br#"{"typing_wpm":900}"#).unwrap();
+        let loaded = AppSettings::load_from(&directory.path).unwrap();
+        assert_eq!(loaded.typing_wpm, crate::app_settings::MAX_TYPING_WPM);
+        let persisted: AppSettings =
+            serde_json::from_slice(&std::fs::read(&directory.path).unwrap()).unwrap();
+        assert_eq!(persisted.typing_wpm, crate::app_settings::MAX_TYPING_WPM);
     }
 
     #[test]

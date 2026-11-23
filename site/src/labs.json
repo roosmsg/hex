@@ -8,7 +8,7 @@
       "oses": [
         "macos"
       ],
-      "summary": "Record calls and keep transcripts",
+      "summary": "Record calls and keep a written copy",
       "title": "Meetings (beta)"
     },
     {
@@ -21,8 +21,21 @@
         "windows",
         "linux"
       ],
-      "summary": "Show provisional words beside the HUD while dictating",
+      "summary": "Show your words next to the small recording indicator (Dictation HUD) as you speak, before the text is pasted",
       "title": "Live text"
+    },
+    {
+      "added": "2026-11-20",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "faster-live-text",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Show live words sooner, and paste text from the same shorter lookahead, at a little more GPU work",
+      "title": "Faster live text"
     },
     {
       "added": "2026-11-07",
@@ -34,7 +47,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Show why a dictation failed beside the HUD",
+      "summary": "When a dictation fails, show the reason next to the small recording indicator (Dictation HUD)",
       "title": "Failure notices"
     },
     {
@@ -45,7 +58,7 @@
       "oses": [
         "linux"
       ],
-      "summary": "Show provisional words in the focused text field while dictating on Wayland, then type the final text there",
+      "summary": "On Wayland, show your words in the text box as you speak, then Hex types the text there",
       "title": "Live typing"
     },
     {
@@ -56,21 +69,8 @@
       "oses": [
         "macos"
       ],
-      "summary": "Break meeting transcripts into chapters while recording",
+      "summary": "Split a meeting's text into chapters while it records",
       "title": "Live chapters"
-    },
-    {
-      "added": "2026-10-30",
-      "group": "dictation",
-      "groupTitle": "Dictation",
-      "id": "vocabulary-biasing",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Bias Parakeet transcription toward your vocabulary; rewriting and search use it either way",
-      "title": "Vocabulary biasing"
     },
     {
       "added": "2026-11-12",
@@ -80,8 +80,19 @@
       "oses": [
         "macos"
       ],
-      "summary": "Window names and terms become temporary vocabulary. Read locally, never saved.",
-      "title": "Screen vocabulary"
+      "summary": "Names in the window you're dictating into help Hex spell them. Never saved",
+      "title": "Words on screen"
+    },
+    {
+      "added": "2026-11-21",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "learn-from-corrections",
+      "oses": [
+        "macos"
+      ],
+      "summary": "When you fix a name in text Hex just pasted, Hex adds the corrected spelling to Vocabulary. It watches only that field, for up to 5 minutes, and never sends it anywhere.",
+      "title": "Learn from corrections"
     },
     {
       "added": "2026-10-30",
@@ -104,20 +115,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Changing input source selects its mapped model and language; manual choices still work",
+      "summary": "When you switch keyboard language, Hex switches to the speech model you picked for it",
       "title": "Switch model with keyboard language"
-    },
-    {
-      "added": "2026-11-10",
-      "group": "models",
-      "groupTitle": "Models",
-      "id": "app-model-switching",
-      "oses": [
-        "macos",
-        "windows"
-      ],
-      "summary": "Each mode can pick a speech model; Hex switches to it when you change apps",
-      "title": "Switch model with app"
     },
     {
       "added": "2026-10-30",
@@ -127,7 +126,7 @@
       "oses": [
         "macos"
       ],
-      "summary": "Record mouse buttons as shortcuts",
+      "summary": "Use a mouse button, such as a side button, as a shortcut",
       "title": "Mouse shortcuts"
     },
     {
@@ -149,7 +148,7 @@
       "oses": [
         "windows"
       ],
-      "summary": "Lets apps such as Discord detect the same key",
+      "summary": "Other apps see your dictation key too, so it can also be push-to-talk in apps like Discord",
       "title": "Share dictation shortcut with other apps"
     },
     {
@@ -163,7 +162,7 @@
         "linux"
       ],
       "summary": "Frees the speech model's memory after a while unused; the next dictation reloads it",
-      "title": "Unload model when idle"
+      "title": "Free memory when idle"
     },
     {
       "added": "2026-11-11",
@@ -248,19 +247,19 @@
       "oses": [
         "macos"
       ],
-      "summary": "Fix clearly misheard words and spoken self-corrections in each dictation, on this Mac with Apple Intelligence",
+      "summary": "Fix clearly misheard words and things you correct out loud in each dictation, using Apple Intelligence on this Mac",
       "title": "Clean up with Apple Intelligence"
     },
     {
-      "added": "2026-10-31",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "subtitle-export",
+      "added": "2026-11-20",
+      "group": "output",
+      "groupTitle": "Output",
+      "id": "neutral-voice",
       "oses": [
         "macos"
       ],
-      "summary": "Export meeting transcripts as SRT or VTT subtitles with hex meetings show",
-      "title": "Subtitle export"
+      "summary": "Rewrite dictations in chosen modes into plain, neutral wording on this Mac, so your writing style doesn't show",
+      "title": "Neutral voice"
     },
     {
       "added": "2026-10-31",
@@ -321,7 +320,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Sort the Local transcription picker by size or name and show only models for the saved language",
+      "summary": "Sort the speech model list by size or name and show only models for your language",
       "title": "Sort and filter models"
     },
     {
@@ -332,8 +331,8 @@
       "oses": [
         "macos"
       ],
-      "summary": "Record which side each modifier of a shortcut is on, such as Right ⌘ + Right ⌥",
-      "title": "Sided modifier chords"
+      "summary": "Tell left and right Option, Command, Shift, and Control apart, so Right Command + Right Option doesn't trigger from the left keys",
+      "title": "Left and right keys"
     },
     {
       "added": "2026-10-31",
@@ -355,8 +354,8 @@
       "oses": [
         "macos"
       ],
-      "summary": "Let Double-tap shortcut mode work when the shortcut has no key, such as Option, Globe, or ⌃⌥",
-      "title": "Double-tap on a lone modifier"
+      "summary": "In Double-tap mode, tap a shortcut made only of Option, Command, Shift, Control, or Globe, with no letter or number key, twice to dictate",
+      "title": "Double-tap Option, Command, or Globe"
     },
     {
       "added": "2026-10-31",
@@ -368,8 +367,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Show each model's raw error rate, benchmark, and source in the Local transcription picker",
-      "title": "Benchmark details"
+      "summary": "Show each speech model's error rate, language, and how it was tested, in the model list",
+      "title": "Model test details"
     },
     {
       "added": "2026-11-01",
@@ -381,7 +380,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Offer Parakeet Ultra, Moondream's post-trained Parakeet v3, in the Local transcription picker",
+      "summary": "Offer Parakeet Ultra, a tuned Parakeet v3 from Moondream, in the speech model list",
       "title": "Parakeet Ultra"
     },
     {
@@ -406,21 +405,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Add a Stats button to History that shows a summary of your retained dictations, with hex history stats",
+      "summary": "Add a Stats button to History that summarizes the dictations you kept, with time saved against your typing speed, the hour you dictate most, a year-long heatmap, and all-time totals kept beyond History's retention (counts only, no text). The hex history stats command prints it too",
       "title": "Dictation stats"
-    },
-    {
-      "added": "2026-11-10",
-      "group": "history",
-      "groupTitle": "History",
-      "id": "history-multi-select",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Shift-click, Cmd-click (Ctrl on Windows and Linux) or drag to select several dictations, then copy or delete them together",
-      "title": "Select multiple dictations"
     },
     {
       "added": "2026-11-01",
@@ -442,19 +428,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Shorten long pauses before a whole dictation goes to the model, so slow computers paste sooner",
+      "summary": "Shorten long pauses before the recording is turned into text, so slow computers paste sooner",
       "title": "Skip long pauses"
-    },
-    {
-      "added": "2026-11-02",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "stop-when-call-ends",
-      "oses": [
-        "macos"
-      ],
-      "summary": "Stop a recording Hex started on its own 30 s after the call app leaves the microphone and goes quiet",
-      "title": "Stop when the call ends"
     },
     {
       "added": "2026-11-02",
@@ -468,19 +443,6 @@
       ],
       "summary": "Offer Vocabulary and Fix this beside Output's Try result, to correct a wrong result",
       "title": "Fix results in Output"
-    },
-    {
-      "added": "2026-11-02",
-      "group": "models",
-      "groupTitle": "Models",
-      "id": "picker-active-first",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "The speech model picker lists the model you're using first",
-      "title": "Model in use first"
     },
     {
       "added": "2026-11-02",
@@ -503,7 +465,7 @@
       "oses": [
         "macos"
       ],
-      "summary": "Add your own speech model files that use Q6_K, Q5_K, or Q4_K weights. They are smaller than Q8_0 but Hex hasn't verified them, so accuracy may vary.",
+      "summary": "Add your own speech model files saved in smaller formats (Q6_K, Q5_K, or Q4_K). They take less space, but Hex hasn't checked them, so accuracy may vary.",
       "title": "Smaller model files"
     },
     {
@@ -516,7 +478,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Show only downloaded speech models in the picker, with the space they take",
+      "summary": "Show only downloaded speech models in the list, with the space they take",
       "title": "Downloaded models only"
     },
     {
@@ -529,7 +491,18 @@
         "linux"
       ],
       "summary": "Use the key left of 1 on ISO keyboards, § or a dead key such as ^, alone as a shortcut; Hex takes it from every app while it's bound",
-      "title": "Section key alone"
+      "title": "§ key alone"
+    },
+    {
+      "added": "2026-11-15",
+      "group": "shortcuts",
+      "groupTitle": "Shortcuts",
+      "id": "microphone-key",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Use the mic key in F5's spot on Mac laptops as a shortcut; once set, only Hex gets it",
+      "title": "Microphone key alone"
     },
     {
       "added": "2026-11-02",
@@ -541,21 +514,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Keep the audio of dictations saved to History, so you can transcribe them again with another model",
+      "summary": "Keep the audio of your dictations in History, so you can turn them into text again with another speech model",
       "title": "Keep recordings"
-    },
-    {
-      "added": "2026-11-06",
-      "group": "dictation",
-      "groupTitle": "Dictation",
-      "id": "settings-search",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Find any setting in General with a search field",
-      "title": "Settings search"
     },
     {
       "added": "2026-11-09",
@@ -571,19 +531,6 @@
       "title": "Appearance"
     },
     {
-      "added": "2026-11-08",
-      "group": "dictation",
-      "groupTitle": "Dictation",
-      "id": "release-notes-link",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Show a link to this build's release notes in the sidebar footer",
-      "title": "Release notes link"
-    },
-    {
       "added": "2026-11-02",
       "group": "dictation",
       "groupTitle": "Dictation",
@@ -593,17 +540,6 @@
       ],
       "summary": "Hide Hex's icon from the menu bar. Shortcuts keep working; open Hex again from Finder or Spotlight for Settings",
       "title": "Hide menu bar icon"
-    },
-    {
-      "added": "2026-11-03",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "movable-meeting-capsules",
-      "oses": [
-        "macos"
-      ],
-      "summary": "Drag meeting capsules out of the way; they come back in the corner you left them",
-      "title": "Movable meeting capsules"
     },
     {
       "added": "2026-11-03",
@@ -624,21 +560,8 @@
       "oses": [
         "linux"
       ],
-      "summary": "Adds a shortcut that runs your Output steps on text you typed and replaces it.",
+      "summary": "Add a shortcut that runs your Output steps on text you typed and replaces it.",
       "title": "Transform typed text"
-    },
-    {
-      "added": "2026-11-03",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "meeting-notes-vocabulary",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Meeting titles and summaries read your vocabulary, so names are spelled the way you wrote them",
-      "title": "Vocabulary in meeting notes"
     },
     {
       "added": "2026-11-03",
@@ -655,25 +578,12 @@
       "added": "2026-11-04",
       "group": "meetings",
       "groupTitle": "Meetings",
-      "id": "meeting-finished-event",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Tell apps on this computer when a meeting's transcript is ready. They get only the meeting's ID, through Hex's local API",
-      "title": "Meeting finished event"
-    },
-    {
-      "added": "2026-11-04",
-      "group": "meetings",
-      "groupTitle": "Meetings",
       "id": "gnome-meeting-capsules",
       "oses": [
         "linux"
       ],
-      "summary": "Show the recording offer and recording indicator floating over your call, through XWayland. Works only while XWayland is already running",
-      "title": "Floating meeting capsules on GNOME"
+      "summary": "On GNOME, float the recording offer and the small recording indicator over your call. Works only while XWayland is already running",
+      "title": "Call recording controls on GNOME"
     },
     {
       "added": "2026-11-08",
@@ -683,34 +593,8 @@
       "oses": [
         "linux"
       ],
-      "summary": "Show Annotate's recording capsule and ink over your screen, through XWayland. Works only while XWayland is already running; Esc can't stop drawing there, so use the capsule's pen button or let go of a held Annotate key",
+      "summary": "On GNOME, show Annotate's recording controls and drawing over your screen. Works only while XWayland is already running; Esc can't stop drawing there, so use the pen button or let go of the Annotate key",
       "title": "Annotate on GNOME"
-    },
-    {
-      "added": "2026-11-04",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "follow-live-transcript",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "While a meeting records, the transcript scrolls to the newest line. Scroll up to read earlier text; scroll back to the bottom to follow again.",
-      "title": "Follow live transcript"
-    },
-    {
-      "added": "2026-11-06",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "more-call-apps",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Offer to record calls in Signal, Telegram, WeChat, LINE, Webex, Element and the Phone app, and name calls on more websites.",
-      "title": "More call apps"
     },
     {
       "added": "2026-11-06",
@@ -720,58 +604,8 @@
       "oses": [
         "macos"
       ],
-      "summary": "Add an audio file to Meetings and transcribe it on this Mac",
+      "summary": "Add an audio file to Meetings and turn it into text on this Mac",
       "title": "Import audio"
-    },
-    {
-      "added": "2026-11-07",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "meeting-descriptive-filenames",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Rename exported meeting Markdown to the meeting's title once notes or a rename provide one, keeping the date and time",
-      "title": "Descriptive meeting file names"
-    },
-    {
-      "added": "2026-11-09",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "meeting-notes-file",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Write the meeting's notes to their own file next to the transcript, sharing its name, with a link back to the transcript",
-      "title": "Separate notes file"
-    },
-    {
-      "added": "2026-11-07",
-      "group": "dictation",
-      "groupTitle": "Dictation",
-      "id": "quit-closes-window",
-      "oses": [
-        "macos"
-      ],
-      "summary": "⌘Q closes the Settings window instead of quitting Hex. Dictation keeps running; quit from the menu bar icon",
-      "title": "⌘Q closes Settings"
-    },
-    {
-      "added": "2026-11-07",
-      "group": "meetings",
-      "groupTitle": "Meetings",
-      "id": "expire-meeting-audio",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Choose how long to keep meeting audio. Transcripts, notes, and summaries follow Keep meetings.",
-      "title": "Expire meeting audio separately"
     },
     {
       "added": "2026-11-07",
@@ -781,7 +615,7 @@
       "oses": [
         "macos"
       ],
-      "summary": "Press Caps Lock to start dictation and again to finish. Hex keeps Caps Lock off and uses its light while it records and transcribes",
+      "summary": "Press Caps Lock to start dictating and again to finish. Hex keeps Caps Lock off and uses its light while it records and writes the text",
       "title": "Caps Lock dictation"
     },
     {
@@ -792,7 +626,7 @@
       "oses": [
         "windows"
       ],
-      "summary": "Use an OpenCode service running in your default WSL distribution for Modes rewriting and the Modes model picker. Looking for it can start WSL.",
+      "summary": "Use OpenCode running in your default WSL distribution for rewriting in Modes and the Modes model list. Looking for it can start WSL",
       "title": "OpenCode in WSL"
     },
     {
@@ -805,7 +639,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Apps can ask Hex's local API for transcripts with Global mode's processing applied.",
+      "summary": "Apps that use Hex's local API can ask for text with Global mode's replacements, corrections, rewriting, and transformations applied",
       "title": "Process API transcripts"
     },
     {
@@ -818,21 +652,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Apps can ask Hex's local API for each segment's or word's start and end times.",
+      "summary": "Apps that use Hex's local API can ask when each word or phrase starts and ends",
       "title": "Timestamps in API transcripts"
-    },
-    {
-      "added": "2026-11-12",
-      "group": "output",
-      "groupTitle": "Output",
-      "id": "api-browser-access",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Let web pages from these origins call Hex's local API. Requests still need the API token.",
-      "title": "Browser access to the local API"
     },
     {
       "added": "2026-11-09",
@@ -859,6 +680,17 @@
       "title": "Upcoming meetings in menu bar"
     },
     {
+      "added": "2026-11-18",
+      "group": "meetings",
+      "groupTitle": "Meetings",
+      "id": "calendar-select-all",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Adds a button to the Calendars row to include or leave out every calendar at once.",
+      "title": "Select all calendars"
+    },
+    {
       "added": "2026-11-09",
       "group": "shortcuts",
       "groupTitle": "Shortcuts",
@@ -881,17 +713,6 @@
       "title": "Pause from menu bar"
     },
     {
-      "added": "2026-11-11",
-      "group": "output",
-      "groupTitle": "Output",
-      "id": "print-start",
-      "oses": [
-        "macos"
-      ],
-      "summary": "Let hex dictation start --print answer with the transcript when it ends",
-      "title": "Print-only CLI dictation"
-    },
-    {
       "added": "2026-11-12",
       "group": "output",
       "groupTitle": "Output",
@@ -901,21 +722,8 @@
         "windows",
         "linux"
       ],
-      "summary": "Say \"rewrite this\" in a dictation, then an instruction; Hex applies it with the mode's OpenCode model",
-      "title": "Voice prompt"
-    },
-    {
-      "added": "2026-11-13",
-      "group": "output",
-      "groupTitle": "Output",
-      "id": "shell-completions",
-      "oses": [
-        "macos",
-        "windows",
-        "linux"
-      ],
-      "summary": "Print a completion script for bash, zsh, fish, elvish, or PowerShell with hex completions <shell>",
-      "title": "Shell completions"
+      "summary": "Say \"rewrite this\" and then what you want; Hex redoes the text with the mode's AI model",
+      "title": "Rewrite by voice"
     },
     {
       "added": "2026-11-13",
@@ -927,7 +735,7 @@
         "windows",
         "linux"
       ],
-      "summary": "Send dictations automatically",
+      "summary": "Press Return after a dictation is pasted, so the message sends itself",
       "title": "YOLO mode"
     },
     {
@@ -940,6 +748,131 @@
       ],
       "summary": "Rewrite uses the text around the cursor to spell names and terms right and fit where it pastes.",
       "title": "Rewrite reads nearby text"
+    },
+    {
+      "added": "2026-11-15",
+      "group": "history",
+      "groupTitle": "History",
+      "id": "copy-dictation-audio",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Copy a kept dictation's audio as a file from History, the menu bar, or the tray; needs Keep recordings",
+      "title": "Copy dictation audio"
+    },
+    {
+      "added": "2026-11-16",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "stop-phrase",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Say a phrase to finish a hands-free dictation; the phrase isn't added to the text",
+      "title": "Stop phrase"
+    },
+    {
+      "added": "2026-11-16",
+      "group": "shortcuts",
+      "groupTitle": "Shortcuts",
+      "id": "hold-through-keys",
+      "oses": [
+        "macos",
+        "windows"
+      ],
+      "summary": "If a shortcut is made only of Option, Command, Shift, Control, or Globe, with no letter or number key, pressing another key or clicking after the first second no longer ends the dictation; let go to finish",
+      "title": "Hold through other keys"
+    },
+    {
+      "added": "2026-11-18",
+      "group": "output",
+      "groupTitle": "Output",
+      "id": "modes-editor",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Edit each mode's apps, corrections and OpenCode rewrite in a Modes pane",
+      "title": "Modes editor"
+    },
+    {
+      "added": "2026-11-13",
+      "group": "models",
+      "groupTitle": "Models",
+      "id": "drop-transcribe",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Drop a WAV, MP3, AAC, M4A, MP4, MOV, AIFF, CAF, FLAC, OGG, Opus, WebM, or MKV file on the Hex window to save its transcript as a text file next to it",
+      "title": "Transcribe dropped audio"
+    },
+    {
+      "added": "2026-11-20",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "vocabulary-files",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Import terms from a CSV file in the Vocabulary sheet, or save the whole list as one",
+      "title": "Vocabulary files"
+    },
+    {
+      "added": "2026-11-21",
+      "group": "output",
+      "groupTitle": "Output",
+      "id": "signature",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Add a line to the end of each dictation, such as \"Sent from Hex\"",
+      "title": "Signature"
+    },
+    {
+      "added": "2026-11-22",
+      "group": "output",
+      "groupTitle": "Output",
+      "id": "dictation-style",
+      "oses": [
+        "macos",
+        "windows",
+        "linux"
+      ],
+      "summary": "Format every dictation as Polished, Casual, Notes, or Verbatim, like the iPhone app, without an AI model",
+      "title": "Dictation style"
+    },
+    {
+      "added": "2026-11-22",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "hud-height",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Choose how high the dictation HUD sits above the Dock when it's at the bottom",
+      "title": "HUD height"
+    },
+    {
+      "added": "2026-11-22",
+      "group": "dictation",
+      "groupTitle": "Dictation",
+      "id": "voice-isolation",
+      "oses": [
+        "macos"
+      ],
+      "summary": "Record dictation through Apple's voice processing so Mic Mode can turn on Voice Isolation and cut background noise.",
+      "title": "Voice isolation"
     }
   ]
 }

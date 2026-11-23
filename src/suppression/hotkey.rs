@@ -122,13 +122,26 @@ const TAP_OR_HOLD: fn() -> bool = if cfg!(test) {
     crate::labs::tap_or_hold
 };
 
-/// Labs › Double-tap on a lone modifier. Unit tests turn it on per machine,
+/// Labs › Double-tap Option, Command, or Globe. Unit tests turn it on per machine,
 /// as they do Tap or hold.
 const DOUBLE_TAP_MODIFIERS: fn() -> bool = if cfg!(test) {
     || false
 } else {
     crate::labs::double_tap_modifiers
 };
+
+/// Labs › Hold through other keys. Unit tests turn it on per machine, as they
+/// do Tap or hold.
+const HOLD_THROUGH_KEYS: fn() -> bool = if cfg!(test) {
+    || false
+} else {
+    crate::labs::hold_through_keys
+};
+
+/// How long a modifier-only shortcut is held before a key joining it is meant
+/// for the app in front rather than a chord (Labs › Hold through other keys).
+/// The Windows hook holds the same second in its `hold_through` module.
+const HOLD_THROUGH_KEYS_AFTER: Duration = Duration::from_secs(1);
 
 pub struct DictationHotkey {
     state: State,
@@ -143,9 +156,13 @@ pub struct DictationHotkey {
     /// Labs › Tap or hold, read at each Toggle release: a press held past
     /// the hold threshold finishes on release instead of locking.
     tap_or_hold: fn() -> bool,
-    /// Labs › Double-tap on a lone modifier, read as the mode is applied: a
+    /// Labs › Double-tap Option, Command, or Globe, read as the mode is applied: a
     /// modifier-only binding may start a double-tap-only capture.
     double_tap_modifiers: fn() -> bool,
+    /// Labs › Hold through other keys, read as a key joins a held
+    /// modifier-only capture: a second or more in, the key is the app's, not a
+    /// chord.
+    hold_through_keys: fn() -> bool,
     binding: RuntimeHotkey,
     /// Toggle's cancel shortcut; `None` in Hold mode.
     cancel: Option<RuntimeHotkey>,
@@ -179,7 +196,7 @@ impl DictationHotkey {
         )
     }
 
-    fn with_binding(
+    pub(crate) fn with_binding(
         trigger_down: bool,
         now: CaptureInstant,
         double_tap_enabled: bool,
@@ -201,6 +218,7 @@ impl DictationHotkey {
             cancel_in_any_mode: false,
             tap_or_hold: TAP_OR_HOLD,
             double_tap_modifiers: DOUBLE_TAP_MODIFIERS,
+            hold_through_keys: HOLD_THROUGH_KEYS,
             binding,
             cancel: None,
             ignore_before: None,
@@ -276,9 +294,23 @@ impl DictationHotkey {
 
     /// Recording hands-free: locked by a double tap, a Toggle release, or
     /// `hex dictation start`.
-    #[cfg(test)]
     pub fn is_locked(&self) -> bool {
         matches!(self.state, State::Locked)
+    }
+
+    /// Labs › Stop phrase: ends a hands-free capture as its finishing press
+    /// does. No key is down when the words finish it, so the machine goes
+    /// idle as the Caps Lock finish and a suspend leave it, rather than
+    /// waiting on a stale-key recovery. A held press records on, and an idle
+    /// machine does nothing.
+    pub fn finish_hands_free(&mut self) -> Option<HotkeyAction> {
+        if !self.is_locked() {
+            return None;
+        }
+        self.state = State::IDLE;
+        self.stale_keys_neutral_since = None;
+        self.chord_break_at = None;
+        Some(HotkeyAction::Finish)
     }
 
     pub fn suppresses_recognition(&self) -> bool {
@@ -959,11 +991,16 @@ impl DictationHotkey {
                         // chord at any time (Spaceman's Option-1 hides its
                         // key from the session), except Return once the
                         // hold made the press Hex's: pressing it while
-                        // dictating never throws the dictation away.
+                        // dictating never throws the dictation away. With
+                        // Labs › Hold through other keys, a key a
+                        // second or more into the hold is the app's too, and
+                        // the release still finishes.
                         || (chord_key_down
                             && !is_return_key(event)
                             && self.binding.key_code.is_none()
-                            && !self.toggle)) =>
+                            && !self.toggle
+                            && !((self.hold_through_keys)()
+                                && now.duration_since(started_at) >= HOLD_THROUGH_KEYS_AFTER))) =>
             {
                 self.state = State::Dirty;
                 let cause = match event {

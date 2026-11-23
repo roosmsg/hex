@@ -29,6 +29,9 @@ pub enum StatusItemAction {
     SelectModel(TranscriptionModelId),
     CancelModelPreparation,
     PasteLast,
+    /// Labs › Copy dictation audio: the newest kept recording as a file on
+    /// the clipboard.
+    CopyLastDictationAudio,
     /// Copy History entry `id` (Labs › Copy recent dictations).
     CopyRecentDictation(u64),
     /// Join a calendar meeting from the menu: opens its call link without
@@ -91,6 +94,14 @@ objc2::define_class!(
             let _ = self.ivars().actions.try_send(StatusItemAction::PasteLast);
         }
 
+        #[unsafe(method(copyLastDictationAudio:))]
+        fn copy_last_dictation_audio(&self, _sender: &AnyObject) {
+            let _ = self
+                .ivars()
+                .actions
+                .try_send(StatusItemAction::CopyLastDictationAudio);
+        }
+
         #[unsafe(method(copyRecentDictation:))]
         fn copy_recent_dictation(&self, sender: &NSMenuItem) {
             if let Ok(id) = u64::try_from(sender.tag()) {
@@ -114,18 +125,28 @@ objc2::define_class!(
         fn menu_needs_update(&self, _menu: &NSMenu) {
             relabel();
             refresh_recent_dictations();
+            refresh_copy_dictation_audio();
             refresh_restore_capture();
             refresh_upcoming();
             update_pause();
         }
 
         /// Restore Last Capture is dimmed while no closed card can come
-        /// back, and an upcoming meeting without a call link is
+        /// back, Copy Last Dictation Audio while no kept recording can be
+        /// copied, Restart to update while a meeting records (the updater
+        /// would refuse it), and an upcoming meeting without a call link is
         /// informational; every other item stays enabled.
         #[unsafe(method(validateMenuItem:))]
         fn validate_menu_item(&self, item: &NSMenuItem) -> bool {
             match item.action() {
                 Some(action) if action == sel!(restoreCapture:) => restore_capture_enabled(),
+                Some(action) if action == sel!(copyLastDictationAudio:) => {
+                    copy_last_dictation_audio_enabled()
+                }
+                Some(action) if action == sel!(checkForUpdates:) => update_enabled(
+                    crate::meeting::recording(),
+                    &crate::macos_rune::update_status(),
+                ),
                 Some(action) if action == sel!(openCalendarMeeting:) => {
                     let Ok(index) = usize::try_from(item.tag()) else {
                         return false.into();
@@ -252,6 +273,8 @@ enum Row {
     /// Labs › Pause from menu bar: hidden until the menu opens with it on.
     PauseHex,
     PasteLast,
+    /// Labs › Copy dictation audio: hidden until the menu opens with it on.
+    CopyLastDictationAudio,
     /// Labs › Copy recent dictations: hidden until the menu opens with it on.
     CopyRecentDictation,
     CopyLastMeetingTranscript,
@@ -267,7 +290,7 @@ enum Row {
 /// How many upcoming meetings the menu lists at most.
 const UPCOMING_ROWS: usize = crate::calendar_menu::MAX_ROWS;
 
-const ROWS: [Row; 23] = [
+const ROWS: [Row; 24] = [
     Row::UpcomingHeader,
     Row::UpcomingSlot,
     Row::UpcomingSlot,
@@ -283,6 +306,7 @@ const ROWS: [Row; 23] = [
     Row::MeetingSeparator,
     Row::PauseHex,
     Row::PasteLast,
+    Row::CopyLastDictationAudio,
     Row::CopyRecentDictation,
     Row::CopyLastMeetingTranscript,
     Row::RestoreCapture,
@@ -308,7 +332,14 @@ impl Row {
             Row::CopySection => label("Copy Section", tr("Copy section")),
             Row::RecordMeeting => label("Record Meeting", tr("Record meeting")),
             Row::PauseHex => pause_title(false),
+            #[cfg(hex_capture)]
+            Row::PasteLast if crate::paste::recent::enabled() => {
+                label("Paste Last", tr("Paste last"))
+            }
             Row::PasteLast => label("Paste Last Dictation", tr("Paste last dictation")),
+            Row::CopyLastDictationAudio => {
+                label("Copy Last Dictation Audio", tr("Copy last dictation audio"))
+            }
             Row::CopyRecentDictation => {
                 label("Copy Recent Dictation", tr("Copy recent dictations"))
             }
@@ -340,6 +371,7 @@ impl Row {
             Row::RecordMeeting => sel!(startMeeting:),
             Row::PauseHex => sel!(togglePause:),
             Row::PasteLast => sel!(pasteLast:),
+            Row::CopyLastDictationAudio => sel!(copyLastDictationAudio:),
             Row::CopyLastMeetingTranscript => sel!(copyLastMeetingTranscript:),
             Row::RestoreCapture => sel!(restoreCapture:),
             Row::Settings => sel!(openSettings:),
@@ -380,6 +412,7 @@ impl Row {
                 | Row::RecordMeeting
                 | Row::MeetingSeparator
                 | Row::PauseHex
+                | Row::CopyLastDictationAudio
                 | Row::CopyRecentDictation
                 | Row::CopyLastMeetingTranscript
                 | Row::RestoreCapture
@@ -486,6 +519,7 @@ struct StatusItemController {
     meeting_button: RefCell<(String, bool)>,
     paste_last: Retained<NSMenuItem>,
     paste_last_key: RefCell<Option<KeyEquivalent>>,
+    copy_last_dictation_audio: Retained<NSMenuItem>,
     pause: Retained<NSMenuItem>,
     pause_title: RefCell<String>,
     recent: Retained<NSMenuItem>,
@@ -656,6 +690,7 @@ pub fn install() -> Result<Receiver<StatusItemAction>> {
             meeting_button: RefCell::new((String::new(), false)),
             paste_last: row(Row::PasteLast),
             paste_last_key: RefCell::new(None),
+            copy_last_dictation_audio: row(Row::CopyLastDictationAudio),
             pause: row(Row::PauseHex),
             pause_title: RefCell::new(pause_title(false)),
             recent: row(Row::CopyRecentDictation),
@@ -945,6 +980,29 @@ fn relabel() {
     });
 }
 
+/// Shows Copy Last Dictation Audio while Labs › Copy dictation audio is on,
+/// as the menu opens; `validateMenuItem:` dims it while nothing kept audio.
+fn refresh_copy_dictation_audio() {
+    let shown = crate::labs::copy_dictation_audio();
+    STATUS_ITEM.with(|controller| {
+        if let Some(controller) = controller.borrow().as_ref() {
+            controller.copy_last_dictation_audio.setHidden(!shown);
+        }
+    });
+}
+
+/// Whether Copy Last Dictation Audio has a kept recording to copy: the lab
+/// is on (the row is hidden otherwise) and the newest History entry that
+/// kept its audio still has its WAV.
+fn copy_last_dictation_audio_enabled() -> bool {
+    crate::labs::copy_dictation_audio()
+        && crate::labs::keep_recordings()
+        && crate::macos_rune::runtime()
+            .and_then(|runtime| runtime.history())
+            .and_then(|history| history.newest_recording(crate::history::now_ms()))
+            .is_some()
+}
+
 /// Shows Restore Last Capture while Labs › Screenshots is on, as the menu
 /// opens.
 fn refresh_restore_capture() {
@@ -1054,6 +1112,17 @@ fn update_title(status: &crate::desktop::host::DesktopUpdateStatus) -> String {
         }
         _ => label("Check for Updates…", tr("Check for updates")),
     }
+}
+
+/// While a meeting records, the updater refuses Restart to update, so the
+/// item that would ask for it is dimmed instead. Every other update row
+/// (Check for updates, Download update, a channel switch) stays usable.
+fn update_enabled(recording: bool, status: &crate::desktop::host::DesktopUpdateStatus) -> bool {
+    !(recording
+        && matches!(
+            status,
+            crate::desktop::host::DesktopUpdateStatus::ReadyToRestart
+        ))
 }
 
 /// Shows the saved Paste Last binding beside Paste Last Dictation, or
@@ -1266,6 +1335,7 @@ mod tests {
                 "—".into(),
                 "Pause Hex".into(),
                 "Paste Last Dictation".into(),
+                "Copy Last Dictation Audio".into(),
                 "Copy Recent Dictation".into(),
                 "Copy Last Meeting Transcript".into(),
                 "Restore Last Capture".into(),
@@ -1362,6 +1432,16 @@ mod tests {
         );
         assert_eq!(update_title(&DesktopUpdateStatus::Current), "检查更新…");
         i18n::apply(Some("en"));
+    }
+
+    #[test]
+    fn restart_to_update_is_dimmed_only_while_a_meeting_records() {
+        use crate::desktop::host::DesktopUpdateStatus;
+        assert!(!update_enabled(true, &DesktopUpdateStatus::ReadyToRestart));
+        assert!(update_enabled(false, &DesktopUpdateStatus::ReadyToRestart));
+        // Checking and downloading stay usable during a meeting.
+        assert!(update_enabled(true, &DesktopUpdateStatus::Current));
+        assert!(update_enabled(true, &DesktopUpdateStatus::Available));
     }
 
     #[test]

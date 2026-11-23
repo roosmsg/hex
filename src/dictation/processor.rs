@@ -5,12 +5,17 @@ use std::time::{Duration, Instant};
 use color_eyre::eyre::{Result, WrapErr, eyre};
 use serde::{Deserialize, Serialize};
 
+use crate::app_settings::DictationStyle;
 use crate::desktop::opencode_service::Service;
 use crate::dictation::context::{ContextSelector, ContextSnapshot};
+use crate::dictation::numbers::numbers_only;
 use crate::dictation::text_replacements::ReplacementSet;
 use crate::dictation::vocabulary::VocabularyEntry;
 
 mod generation;
+mod processed;
+
+pub use self::processed::{Processed, ProcessingObservation};
 
 use self::generation::{
     Request, Response, generate_single_model, post_generation, remaining_generation_deadline,
@@ -20,6 +25,11 @@ const PROTOCOL_PROMPT: &str = "You transform dictated speech into replacement te
 const CATALOG_DEADLINE: Duration = Duration::from_secs(10);
 
 pub use crate::app_settings::DictationPostProcessing as PostProcessingSettings;
+
+/// The processing profile a run records when only the person's
+/// transformations ran, with no mode or voice-prompt rewrite. It is not a
+/// mode, so Output time leaves these runs out.
+pub const CUSTOM_TRANSFORMATIONS: &str = "Custom transformations";
 
 /// Where the text a mode processes came from.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -48,6 +58,9 @@ struct DictationLabs {
     spoken_formatting: bool,
     spoken_symbols: bool,
     filler_words: bool,
+    /// Labs › Dictation style's choice while on; None leaves the text as
+    /// the corrections and rewrite wrote it.
+    dictation_style: Option<DictationStyle>,
 }
 
 impl DictationLabs {
@@ -57,6 +70,7 @@ impl DictationLabs {
             spoken_formatting: crate::labs::spoken_formatting(),
             spoken_symbols: crate::labs::spoken_symbols(),
             filler_words: crate::labs::filler_words(),
+            dictation_style: crate::labs::dictation_style(),
         }
     }
 }
@@ -75,6 +89,9 @@ pub struct Profile {
     /// The mode's speech model and language while it matches the foreground
     /// app (Labs › Switch model with app).
     speech: Option<crate::app_settings::KeyboardModelChoice>,
+    /// Rewrite this mode's dictations into plain, neutral wording on this Mac
+    /// (Labs › Neutral voice, macOS).
+    neutral_voice: bool,
 }
 
 impl Profile {
@@ -89,6 +106,7 @@ impl Profile {
             transformations: Vec::new(),
             vocabulary: Vec::new(),
             speech: None,
+            neutral_voice: false,
         }
     }
 
@@ -154,14 +172,16 @@ impl Profile {
         } else {
             &mode.name
         };
-        Self::configured(
+        let mut profile = Self::configured(
             name,
             ReplacementSet::new(&mode.replacements),
             mode.transformations.clone(),
             &mode.post_processing,
         )
         .vocabulary(mode.vocabulary.clone())
-        .speech(mode.speech.clone())
+        .speech(mode.speech.clone());
+        profile.neutral_voice = mode.neutral_voice;
+        profile
     }
 
     /// Builds a runtime profile from persisted settings. A malformed model key
@@ -400,10 +420,12 @@ impl Profiles {
 
     pub fn processes(&self, context: &ContextSnapshot) -> bool {
         let profile = self.select(context);
-        // A cleanup-only dictation still shows the HUD's processing stage.
+        // A cleanup-only or neutral-only dictation still shows the HUD's
+        // processing stage.
         profile.ai_enabled
             || !profile.transformations.is_empty()
             || crate::dictation::apple_cleanup::runs_here()
+            || (profile.neutral_voice && crate::dictation::neutral_voice::runs_here())
     }
 
     fn corrected(
@@ -474,7 +496,7 @@ impl Profiles {
     }
 
     /// [`Self::process_cancellable`] with the voice prompt phrase already
-    /// resolved: `None` is Labs › Voice prompt off, or locked.
+    /// resolved: `None` is Labs › Rewrite by voice off, or locked.
     fn process_cancellable_with(
         &self,
         transcript: &str,
@@ -484,31 +506,94 @@ impl Profiles {
         source: Source,
         voice_prompt: Option<&str>,
     ) -> Processed {
+        self.process_cancellable_inner(
+            transcript,
+            language,
+            context,
+            cancelled,
+            source,
+            voice_prompt,
+            true,
+            DictationLabs::current(),
+        )
+    }
+
+    /// The local API's `process=global`: Global mode's replacements,
+    /// corrections, rewrite, and transformations, without the dictation
+    /// style, which belongs to a dictation's own paste.
+    pub fn process_api_cancellable(
+        &self,
+        transcript: &str,
+        language: &str,
+        context: &ContextSnapshot,
+        cancelled: &AtomicBool,
+        source: Source,
+    ) -> Processed {
+        let voice_prompt = crate::labs::voice_prompt().then(crate::labs::voice_prompt_phrase);
+        self.process_cancellable_inner(
+            transcript,
+            language,
+            context,
+            cancelled,
+            source,
+            voice_prompt.as_deref(),
+            false,
+            DictationLabs::current(),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn process_cancellable_inner(
+        &self,
+        transcript: &str,
+        language: &str,
+        context: &ContextSnapshot,
+        cancelled: &AtomicBool,
+        source: Source,
+        voice_prompt: Option<&str>,
+        style_dictation: bool,
+        labs: DictationLabs,
+    ) -> Processed {
         let profile = self.select(context);
         // Labs › Spoken formatting, spoken symbols, and filler words only
         // make sense for speech: typed text starts from what is already
         // written and skips them.
-        let corrected = self.corrected(
-            profile,
-            transcript,
-            language,
+        let corrected = self.corrected(profile, transcript, language, source, labs);
+        // Labs › Dictation style writes a dictation's final text, after the
+        // corrections and any rewrite and before the transformations.
+        let style = labs
+            .dictation_style
+            .filter(|_| style_dictation && source == Source::Dictation);
+        // A transcript of numbers alone has nothing to rewrite; a model only
+        // turns it into digits and re-punctuates it (#949). The neutral pass
+        // and Labs › Clean up with Apple Intelligence skip those too.
+        let numbers_only = numbers_only(&corrected);
+        // Labs › Neutral voice replaces both the rewrite and the cleanup for
+        // an opted-in mode, and outranks the voice prompt too, so a privacy
+        // dictation never reaches OpenCode.
+        if let Some(processed) = crate::dictation::neutral_voice::processed(
+            &corrected,
+            numbers_only,
+            cancelled,
+            profile.neutral_voice,
             source,
-            DictationLabs::current(),
-        );
-        // Labs › Voice prompt: heard speech may carry a spoken instruction
+            &profile.transformations,
+        ) {
+            return with_style(processed, style, language);
+        }
+        // Labs › Rewrite by voice: heard speech may carry a spoken instruction
         // that replaces the mode's rewrite with one request of its own.
         if source == Source::Dictation
             && let Some(phrase) = voice_prompt
             && let Some(instruction) =
                 crate::dictation::voice_prompt::instruction(&corrected, phrase)
         {
-            return voice_prompt_processed(profile, &instruction, &corrected, context, cancelled);
+            return with_style(
+                voice_prompt_processed(profile, &instruction, &corrected, context, cancelled),
+                style,
+                language,
+            );
         }
-        // A transcript of numbers alone has nothing to rewrite; a model only
-        // turns it into digits and re-punctuates it (#949). Labs › Clean up
-        // with Apple Intelligence skips those too, so the count is read
-        // whether or not this mode rewrites.
-        let numbers_only = numbers_only(&corrected);
         if profile.ai_enabled && numbers_only {
             tracing::info!(
                 profile = profile.name,
@@ -529,12 +614,16 @@ impl Profiles {
             } else {
                 crate::dictation::apple_cleanup::stage(&corrected, numbers_only, cancelled)
             };
-            return Processed {
-                text,
-                nothing: false,
-                observation,
-                transformations: profile.transformations.clone(),
-            };
+            return with_style(
+                Processed {
+                    text,
+                    nothing: false,
+                    observation,
+                    transformations: profile.transformations.clone(),
+                },
+                style,
+                language,
+            );
         }
         let prompt = prompt(
             profile,
@@ -554,26 +643,46 @@ impl Profiles {
             &profile.name,
             Instant::now(),
         );
+        let model = model_label(&observation);
         match &observation.fallback {
             None => tracing::info!(
                 profile = profile.name,
                 latency_ms = observation.latency_ms,
+                model = %model,
                 "dictation post-processing completed"
             ),
             Some(reason) => tracing::warn!(
                 profile = profile.name,
                 latency_ms = observation.latency_ms,
+                model = %model,
                 %reason,
                 "dictation post-processing failed; pasting the corrected transcript"
             ),
         }
-        Processed {
-            text: text.unwrap_or(corrected),
-            nothing: false,
-            observation: Some(observation),
-            transformations: profile.transformations.clone(),
-        }
+        with_style(
+            Processed {
+                text: text.unwrap_or(corrected),
+                nothing: false,
+                observation: Some(observation),
+                transformations: profile.transformations.clone(),
+            },
+            style,
+            language,
+        )
     }
+}
+
+/// `processed` after Labs › Dictation style: the text is written in `style`
+/// when the lab is on, and stays exactly as it was otherwise.
+fn with_style(
+    mut processed: Processed,
+    style: Option<DictationStyle>,
+    language: &str,
+) -> Processed {
+    if let Some(style) = style {
+        processed.text = crate::dictation::style::format(&processed.text, style, language);
+    }
+    processed
 }
 
 /// One voice-prompt request instead of the mode's rewrite: the spoken
@@ -620,15 +729,18 @@ fn voice_prompt_processed(
         &profile.name,
         Instant::now(),
     );
+    let model = model_label(&observation);
     match &observation.fallback {
         None => tracing::info!(
             profile = profile.name,
             latency_ms = observation.latency_ms,
+            model = %model,
             "voice prompt completed"
         ),
         Some(reason) => tracing::warn!(
             profile = profile.name,
             latency_ms = observation.latency_ms,
+            model = %model,
             %reason,
             "voice prompt failed; pasting what the speaker dictated"
         ),
@@ -711,64 +823,6 @@ fn voice_prompt_fallback(
     }
 }
 
-/// Whether a transcript says nothing but numbers: digits or English number
-/// words, with punctuation between them.
-fn numbers_only(transcript: &str) -> bool {
-    const WORDS: &[&str] = &[
-        "zero",
-        "one",
-        "two",
-        "three",
-        "four",
-        "five",
-        "six",
-        "seven",
-        "eight",
-        "nine",
-        "ten",
-        "eleven",
-        "twelve",
-        "thirteen",
-        "fourteen",
-        "fifteen",
-        "sixteen",
-        "seventeen",
-        "eighteen",
-        "nineteen",
-        "twenty",
-        "thirty",
-        "forty",
-        "fifty",
-        "sixty",
-        "seventy",
-        "eighty",
-        "ninety",
-        "hundred",
-        "thousand",
-        "million",
-        "billion",
-    ];
-    /// Words that join numbers but are not numbers themselves.
-    const JOINERS: &[&str] = &["and", "point", "minus", "negative"];
-    let mut any_number = false;
-    for token in transcript.split(|c: char| c.is_whitespace() || c == '-') {
-        let word = token.trim_matches(|c: char| !c.is_alphanumeric());
-        if word.is_empty() {
-            continue;
-        }
-        if word
-            .chars()
-            .all(|c| c.is_ascii_digit() || c == '.' || c == ',')
-            || WORDS.iter().any(|w| word.eq_ignore_ascii_case(w))
-        {
-            any_number = true;
-        } else if !JOINERS.iter().any(|w| word.eq_ignore_ascii_case(w)) {
-            return false;
-        }
-    }
-    any_number
-}
-
 /// One generation's text and the model that wrote it, when Hex named one
 /// (`None` when OpenCode's own default model answered).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -831,19 +885,64 @@ fn generate_observed(
     profile_name: &str,
     started: Instant,
 ) -> (Option<String>, ProcessingObservation) {
-    let result = generate_cancellable(prompt, model, deadline, cancelled);
-    let (text, fallback) = match result.map(|generated| generated.text) {
-        Ok(text) if !text.trim().is_empty() => (Some(text.trim().into()), None),
-        Ok(_) => (None, Some("processor returned empty text".into())),
-        Err(error) => (None, Some(error.to_string())),
+    observed(
+        generate_cancellable(prompt, model, deadline, cancelled),
+        model,
+        profile_name,
+        started.elapsed(),
+    )
+}
+
+/// The text and observation for one generation. The observation names the
+/// model that answered, or the one the request asked for when nothing did, so
+/// logs and retained events say which model rewrote the text.
+fn observed(
+    result: Result<Generated>,
+    requested: Option<&Model>,
+    profile_name: &str,
+    elapsed: Duration,
+) -> (Option<String>, ProcessingObservation) {
+    let (text, model, fallback) = match result {
+        Ok(generated) => {
+            let trimmed = generated.text.trim();
+            let text = (!trimmed.is_empty()).then(|| trimmed.to_owned());
+            let fallback = text
+                .is_none()
+                .then(|| "processor returned empty text".to_owned());
+            (text, generated.model, fallback)
+        }
+        Err(error) => (None, requested.cloned(), Some(error.to_string())),
     };
     let observation = ProcessingObservation {
         profile: profile_name.into(),
-        latency_ms: started.elapsed().as_millis() as u64,
+        latency_ms: elapsed.as_millis() as u64,
+        model: model
+            .as_ref()
+            .map(|model| format!("{}/{}", model.provider, model.id)),
         fallback,
     };
     (text, observation)
 }
+
+/// What a processing log line names for the model that ran: the named model
+/// that answered, or on failure the one the request asked for; OpenCode's own
+/// default when no model was named and it answered; and Hex's automatic
+/// choice when no named model answered at all.
+fn model_label(observation: &ProcessingObservation) -> &str {
+    match observation.model.as_deref() {
+        Some(model) => model,
+        None if observation.fallback.is_some() => AUTOMATIC_MODEL,
+        None => OPENCODE_DEFAULT_MODEL,
+    }
+}
+
+/// What a processing log line names when the request named no model and
+/// Hex's automatic ranked choice had no model answer.
+const AUTOMATIC_MODEL: &str = "automatic";
+
+/// What a processing log line names when the request asked for no model:
+/// OpenCode picked its own default.
+const OPENCODE_DEFAULT_MODEL: &str = "opencode default";
 
 #[derive(Clone, Debug)]
 pub struct ModelChoice {
@@ -862,6 +961,13 @@ pub struct ModelCatalog {
 }
 
 impl ModelCatalog {
+    /// Whether an unset model key gets Hex's own ranked pick instead of
+    /// OpenCode's default model. [`build_model_catalog`] sets the default
+    /// from the ranked list exactly when this is true.
+    pub fn automatic_default(&self) -> bool {
+        !self.ranked_candidates(None).is_empty()
+    }
+
     pub fn recommended_variant_for(&self, key: &str) -> Option<&str> {
         let choice = self.models.iter().find(|choice| choice.key == key)?;
         recommended_variant_for_choice(choice)
@@ -919,6 +1025,15 @@ fn recommended_variant_for_choice(choice: &ModelChoice) -> Option<&str> {
         .find(|preferred| choice.variants.iter().any(|v| v == *preferred))
 }
 
+/// Providers that wrap a model in a local agent harness instead of calling
+/// its API directly. Each request pays that harness's startup, so they stay
+/// selectable but are never picked automatically (#1954).
+const AGENT_HARNESS_PROVIDERS: &[&str] = &["claude-agent"];
+
+fn is_agent_harness_provider(provider: &str) -> bool {
+    AGENT_HARNESS_PROVIDERS.contains(&provider)
+}
+
 fn provider_priority(provider: &str) -> usize {
     match provider {
         "google" | "anthropic" | "openai" => 0,
@@ -935,6 +1050,7 @@ fn ranked_choice_indices(choices: &[ModelChoice]) -> Vec<usize> {
         if let Some((best_idx, _)) = choices
             .iter()
             .enumerate()
+            .filter(|(_, choice)| !is_agent_harness_provider(&choice.provider))
             .filter(|(_, choice)| matches_recommended_model_id(leaf_model_id(&choice.key), rec.id))
             .min_by_key(|(idx, choice)| (provider_priority(&choice.provider), *idx))
             && !ranked.contains(&best_idx)
@@ -1130,68 +1246,6 @@ fn opencode_api_within<T: for<'de> Deserialize<'de>>(
         return Err(eyre!("OpenCode {path} answered HTTP {}", response.status));
     }
     decode_api_response(path, &response.body)
-}
-
-pub struct Processed {
-    pub text: String,
-    /// A voice prompt that deliberately asked nothing: the listeners finish
-    /// quietly instead of failing on empty text. Never true for an ordinary
-    /// empty output.
-    pub nothing: bool,
-    pub observation: Option<ProcessingObservation>,
-    pub transformations: Vec<String>,
-}
-
-pub type ProcessingObservation = crate::desktop::events::DictationProcessing;
-
-impl Processed {
-    /// `text` as heard, with no step run (Dictate without processing on the
-    /// Linux and Windows listeners; macOS skips processing in `parakeet`).
-    #[cfg_attr(target_os = "macos", allow(dead_code))]
-    pub fn unchanged(text: &str) -> Self {
-        Self {
-            text: text.to_string(),
-            nothing: false,
-            observation: None,
-            transformations: Vec::new(),
-        }
-    }
-
-    /// Runs the selected transformations, the last processing stage. The chain
-    /// is one stage: a failure keeps the previous text and records the error.
-    pub fn apply_transformations(
-        &mut self,
-        client: &crate::personal_commands::TransformationClient,
-        context: &ContextSnapshot,
-        cancelled: &AtomicBool,
-        source: Source,
-    ) {
-        if self.transformations.is_empty() || cancelled.load(Ordering::Acquire) {
-            return;
-        }
-        let started = Instant::now();
-        let transformed = client.transform(
-            &self.transformations,
-            &self.text,
-            context,
-            cancelled,
-            source,
-        );
-        let observation = self
-            .observation
-            .get_or_insert_with(|| ProcessingObservation {
-                profile: "Custom transformations".into(),
-                latency_ms: 0,
-                fallback: None,
-            });
-        observation.latency_ms = observation
-            .latency_ms
-            .saturating_add(started.elapsed().as_millis() as u64);
-        match transformed {
-            Ok(text) => self.text = text,
-            Err(error) => observation.fallback = Some(error),
-        }
-    }
 }
 
 /// The transcript ahead of mode corrections. Spoken formatting, spoken
@@ -1456,6 +1510,7 @@ mod tests {
             input_revision: None,
             screen_terms: Vec::new(),
             caret_text: None,
+            bundle_name: None,
         }
     }
 
@@ -1500,6 +1555,7 @@ mod tests {
             catalog.default_key.as_deref(),
             Some("example/rewrite-careful")
         );
+        assert!(!catalog.automatic_default());
         for (choice, expected_id) in catalog
             .models
             .iter()
@@ -1890,7 +1946,7 @@ mod tests {
         let transcript = "We ship Friday. rewrite this make it formal";
         let cancelled = AtomicBool::new(false);
 
-        // Labs › Voice prompt off: no phrase is even resolved.
+        // Labs › Rewrite by voice off: no phrase is even resolved.
         let processed = profiles.process_cancellable_with(
             transcript,
             "en",
@@ -1991,6 +2047,7 @@ mod tests {
             spoken_formatting: true,
             spoken_symbols: true,
             filler_words: true,
+            dictation_style: None,
         };
         let speech = "um first new line done comma thanks";
         let dictated = prepare_transcript(speech, "en", Source::Dictation, labs);
@@ -2012,6 +2069,66 @@ mod tests {
             prepare_transcript(speech, "en", Source::Dictation, DictationLabs::default()),
             speech
         );
+    }
+
+    /// Labs › Dictation style writes a dictation's final text after its
+    /// corrections and before the transformations; typed text and the local
+    /// API's process=global keep their text exactly.
+    #[test]
+    fn the_dictation_style_writes_a_dictation_and_leaves_typed_text_and_the_api_alone() {
+        use crate::app_settings::DictationStyle;
+        let profiles =
+            Profiles::new(Profile::new("Global", "").transformations(vec!["lowercase".into()]));
+        let context = context("Zed", None);
+        let cancelled = AtomicBool::new(false);
+        let casual = DictationLabs {
+            dictation_style: Some(DictationStyle::Casual),
+            ..DictationLabs::default()
+        };
+        let dictated = profiles.process_cancellable_inner(
+            "Um, I'll call Ravi.",
+            "en",
+            &context,
+            &cancelled,
+            Source::Dictation,
+            None,
+            true,
+            casual,
+        );
+        assert_eq!(dictated.text, "i'll call Ravi");
+        // The transformation runs after the style, so its lowercase output
+        // proves the style wrote "i'll call Ravi" first.
+        let mut dictated = dictated;
+        dictated.apply_transformations(
+            &crate::personal_commands::TransformationClient::default(),
+            &context,
+            &cancelled,
+            Source::Dictation,
+        );
+        assert_eq!(dictated.text, "i'll call ravi");
+        let typed = profiles.process_cancellable_inner(
+            "Um, I'll call Ravi.",
+            "en",
+            &context,
+            &cancelled,
+            Source::TypedText,
+            None,
+            true,
+            casual,
+        );
+        assert_eq!(typed.text, "Um, I'll call Ravi.");
+        let api = profiles.process_cancellable_inner(
+            "Um, I'll call Ravi.",
+            "en",
+            &context,
+            &cancelled,
+            Source::Dictation,
+            None,
+            false,
+            casual,
+        );
+        assert_eq!(api.text, "Um, I'll call Ravi.");
+        assert_eq!(dictated.transformations, ["lowercase"]);
     }
 
     /// Labs › Transform typed text runs the same profile but never the
@@ -2045,6 +2162,30 @@ mod tests {
         );
         assert_eq!(processed.text, "one two three four five");
         assert!(processed.observation.is_none());
+    }
+
+    /// Only a mode that opts in carries Labs › Neutral voice into its
+    /// profile; every other mode behaves as before.
+    #[test]
+    fn only_a_mode_that_asks_for_neutral_voice_carries_it() {
+        use crate::app_settings::{DictationMode, DictationProcessingSettings};
+        let profiles = Profiles::from_settings(&DictationProcessingSettings {
+            modes: vec![
+                DictationMode {
+                    applications: vec!["Notes".into()],
+                    ..Default::default()
+                },
+                DictationMode {
+                    applications: vec!["Slack".into()],
+                    neutral_voice: true,
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        });
+        assert!(!profiles.select(&context("Notes", None)).neutral_voice);
+        assert!(profiles.select(&context("Slack", None)).neutral_voice);
+        assert!(!profiles.select(&context("Zed", None)).neutral_voice);
     }
 
     #[test]
@@ -2452,6 +2593,7 @@ mod tests {
             catalog.default_name.as_deref(),
             Some("Gemini 3.1 Flash Lite")
         );
+        assert!(catalog.automatic_default());
         assert_eq!(catalog.default_variant.as_deref(), Some("minimal"));
         assert_eq!(
             catalog
@@ -2488,6 +2630,105 @@ mod tests {
         let catalog3 = build_model_catalog(only_nano, Some(heavy_default));
         assert_eq!(catalog3.default_key.as_deref(), Some("openai/gpt-5.4-nano"));
         assert_eq!(catalog3.default_variant.as_deref(), Some("none"));
+    }
+
+    fn model_choice(provider: &str, id: &str, name: &str, variants: &[&str]) -> ModelInfo {
+        ModelInfo {
+            id: id.into(),
+            provider_id: provider.into(),
+            name: name.into(),
+            enabled: true,
+            capabilities: ModelCapabilities {
+                output: vec!["text".into()],
+            },
+            variants: variants
+                .iter()
+                .map(|v| ModelVariant { id: (*v).into() })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn model_catalog_ranks_a_direct_provider_over_its_agent_harness() {
+        let models = vec![
+            model_choice(
+                "claude-agent",
+                "claude-haiku-4-5-20251001",
+                "Claude Haiku 4.5",
+                &[],
+            ),
+            model_choice(
+                "anthropic",
+                "claude-haiku-4-5-20251001",
+                "Claude Haiku 4.5",
+                &[],
+            ),
+        ];
+        let catalog = build_model_catalog(models, None);
+
+        assert_eq!(
+            catalog.default_key.as_deref(),
+            Some("anthropic/claude-haiku-4-5-20251001")
+        );
+        assert_eq!(
+            catalog
+                .ranked_candidates(None)
+                .iter()
+                .map(|model| (model.provider.as_str(), model.id.as_str()))
+                .collect::<Vec<_>>(),
+            [("anthropic", "claude-haiku-4-5-20251001")]
+        );
+        assert!(
+            catalog
+                .models
+                .iter()
+                .any(|choice| choice.key == "claude-agent/claude-haiku-4-5-20251001"),
+            "the agent harness stays explicitly selectable: {:?}",
+            catalog
+                .models
+                .iter()
+                .map(|choice| choice.key.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn agent_harness_models_never_rank_and_fall_back_to_the_default_model() {
+        let harness = model_choice(
+            "claude-agent",
+            "claude-haiku-4-5-20251001",
+            "Claude Haiku 4.5",
+            &[],
+        );
+        let direct = model_choice("openai", "gpt-5.4-nano", "GPT-5.4 Nano", &[]);
+        let opencode_default = model_choice("example", "default-model", "Default Model", &[]);
+
+        let catalog = build_model_catalog(
+            vec![harness.clone(), direct],
+            Some(opencode_default.clone()),
+        );
+        assert_eq!(catalog.default_key.as_deref(), Some("openai/gpt-5.4-nano"));
+        assert_eq!(
+            catalog
+                .ranked_candidates(None)
+                .iter()
+                .map(|model| model.provider.as_str())
+                .collect::<Vec<_>>(),
+            ["openai"]
+        );
+
+        let only_harness = build_model_catalog(vec![harness], Some(opencode_default));
+        assert!(only_harness.ranked_candidates(None).is_empty());
+        assert_eq!(
+            only_harness.default_key.as_deref(),
+            Some("example/default-model")
+        );
+        assert!(
+            only_harness
+                .models
+                .iter()
+                .any(|choice| choice.key == "claude-agent/claude-haiku-4-5-20251001")
+        );
     }
 
     #[test]
@@ -2554,6 +2795,115 @@ mod tests {
                 "id": "claude-haiku-4-5"
             })
         );
+    }
+
+    /// A processing observation names the model that answered, so the log
+    /// line and the retained event say which one rewrote the text.
+    #[test]
+    fn a_processing_observation_names_the_model_that_answered() {
+        let model = Model {
+            provider: "anthropic".into(),
+            id: "claude-haiku-4-5".into(),
+            variant: None,
+        };
+
+        let (text, observation) = observed(
+            Ok(Generated {
+                text: "  rewritten  ".into(),
+                model: Some(model.clone()),
+            }),
+            None,
+            "Chat",
+            Duration::from_millis(120),
+        );
+        assert_eq!(text.as_deref(), Some("rewritten"));
+        assert_eq!(
+            observation.model.as_deref(),
+            Some("anthropic/claude-haiku-4-5")
+        );
+        assert_eq!(observation.fallback, None);
+        assert_eq!(observation.latency_ms, 120);
+
+        // OpenCode's own default answered: there is no model to name.
+        let (_, observation) = observed(
+            Ok(Generated {
+                text: "rewritten".into(),
+                model: None,
+            }),
+            None,
+            "Chat",
+            Duration::ZERO,
+        );
+        assert_eq!(observation.model, None);
+
+        // Nothing answered: the observation still names the model asked for.
+        let (text, observation) =
+            observed(Err(eyre!("boom")), Some(&model), "Chat", Duration::ZERO);
+        assert_eq!(text, None);
+        assert_eq!(
+            observation.model.as_deref(),
+            Some("anthropic/claude-haiku-4-5")
+        );
+        assert_eq!(observation.fallback.as_deref(), Some("boom"));
+
+        // An empty answer still names the model that made it.
+        let (text, observation) = observed(
+            Ok(Generated {
+                text: "   ".into(),
+                model: Some(model),
+            }),
+            None,
+            "Chat",
+            Duration::ZERO,
+        );
+        assert_eq!(text, None);
+        assert_eq!(
+            observation.model.as_deref(),
+            Some("anthropic/claude-haiku-4-5")
+        );
+        assert_eq!(
+            observation.fallback.as_deref(),
+            Some("processor returned empty text")
+        );
+    }
+
+    /// A failure with no named model leaves the observation without one, so
+    /// the log line must not claim OpenCode's default model ran.
+    #[test]
+    fn a_processing_log_line_names_the_model_or_its_automatic_choice() {
+        let model = Model {
+            provider: "anthropic".into(),
+            id: "claude-haiku-4-5".into(),
+            variant: None,
+        };
+        let answered = |model| {
+            observed(
+                Ok(Generated {
+                    text: "rewritten".into(),
+                    model,
+                }),
+                None,
+                "Chat",
+                Duration::ZERO,
+            )
+            .1
+        };
+
+        assert_eq!(
+            model_label(&answered(Some(model.clone()))),
+            "anthropic/claude-haiku-4-5"
+        );
+        let failed = observed(Err(eyre!("boom")), Some(&model), "Chat", Duration::ZERO).1;
+        assert_eq!(model_label(&failed), "anthropic/claude-haiku-4-5");
+        assert_eq!(model_label(&answered(None)), "opencode default");
+        let automatic = observed(
+            Err(eyre!("OpenCode isn't running")),
+            None,
+            "Chat",
+            Duration::ZERO,
+        )
+        .1;
+        assert_eq!(model_label(&automatic), "automatic");
     }
 
     /// A ranked list read while OpenCode was still loading can name models

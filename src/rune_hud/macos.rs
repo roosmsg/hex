@@ -12,7 +12,7 @@ use objc2_app_kit::{
     NSApplication, NSEvent, NSScreen, NSStatusBar, NSWindow, NSWindowCollectionBehavior,
 };
 use objc2_foundation::{NSNumber, NSRect, NSString};
-use rune::{DisplayTarget, OverlayHandle, OverlayPlacement};
+use rune::{DisplayTarget, NativeDisplayId, OverlayHandle, OverlayPlacement};
 
 use super::{Hud, HudEvent, HudSender, LIVE_TEXT_GAP, WINDOW, rehome, set_live_text};
 use crate::app_settings::IndicatorPosition;
@@ -265,6 +265,9 @@ impl DictationIndicatorUi {
         };
         // A HUD on its way out stays visible until Rune applies the hide.
         let visible = self.hud.shown.load(Ordering::Acquire) && panel.isVisible();
+        // Read before the repair: the window server applies it later, and the
+        // pump's next ticks log whether it took.
+        let active_space = panel.isOnActiveSpace();
         match self.rehome.reassert(Instant::now(), visible) {
             rehome::Repair::None => {}
             rehome::Repair::Mask => apply_behavior(&panel),
@@ -273,7 +276,7 @@ impl DictationIndicatorUi {
         tracing::info!(
             window = number,
             visible,
-            active_space = panel.isOnActiveSpace(),
+            active_space,
             "re-asserted the dictation HUD's collection behaviors after a Dock icon change"
         );
     }
@@ -284,10 +287,12 @@ impl DictationIndicatorUi {
     /// that only as its panel shows (#1084). Clearing the mask and setting the
     /// intended one back makes the window server apply it again; the panel is
     /// ordered out and back in, so this reorders the panel but leaves Rune's
-    /// presence state and alpha alone. A stranding gets at most
-    /// [`rehome::MAX_REPAIRS`] attempts, [`rehome::REPAIR_SPACING`] apart,
-    /// reset when the panel is seen on the active Space or the HUD hides, so
-    /// a repair that did not take cannot loop.
+    /// presence state and alpha alone. The window server applies that later,
+    /// so an attempt is judged, and logged, only on a later tick: one that
+    /// still finds the panel elsewhere after [`rehome::wait`] counts it and
+    /// tries again with a longer wait, for at most [`rehome::MAX_REPAIRS`]
+    /// attempts, reset when the panel is seen on the active Space or the HUD
+    /// hides, so a repair that did not take cannot loop.
     fn rehome_on_active_space(&mut self, mtm: MainThreadMarker) {
         let Some((number, panel)) = self.panel(mtm) else {
             return;
@@ -300,15 +305,39 @@ impl DictationIndicatorUi {
         } else {
             rehome::Located::Elsewhere
         };
-        if self.rehome.decide(Instant::now(), located) != rehome::Repair::Rehome {
-            return;
+        let decision = self.rehome.decide(Instant::now(), located);
+        match decision.confirmed {
+            None if decision.repair == rehome::Repair::Rehome => tracing::info!(
+                window = number,
+                "the dictation HUD is on another Space; re-homing it"
+            ),
+            None => {}
+            Some(rehome::Confirmed::Repaired { attempts }) => tracing::info!(
+                window = number,
+                attempts,
+                "the dictation HUD is on the active Space again after re-homing"
+            ),
+            Some(rehome::Confirmed::Stranded {
+                attempts,
+                next: Some(next),
+            }) => tracing::info!(
+                window = number,
+                attempts,
+                next_try_ms = next.as_millis() as u64,
+                "the dictation HUD is still on another Space; re-homing it again"
+            ),
+            Some(rehome::Confirmed::Stranded {
+                attempts,
+                next: None,
+            }) => tracing::warn!(
+                window = number,
+                attempts,
+                "the dictation HUD is still on another Space; giving up until it shows again"
+            ),
         }
-        rehome_panel(&panel);
-        tracing::info!(
-            window = number,
-            active_space = panel.isOnActiveSpace(),
-            "re-homed the dictation HUD on the active Space"
-        );
+        if decision.repair == rehome::Repair::Rehome {
+            rehome_panel(&panel);
+        }
     }
 }
 
@@ -321,7 +350,13 @@ impl Hud {
             return;
         };
         let content = content(0.0);
-        let placed = hud_placement::place(Default::default(), &screen, content, false);
+        let placed = hud_placement::place(
+            Default::default(),
+            &screen,
+            content,
+            false,
+            hud_placement::BOTTOM_OFFSET,
+        );
         let (top, _) = hud_placement::plate_span(&placed, content);
         set_live_text(Spot::Global {
             x: (screen.frame.x + screen.frame.width / 2.0) as f32,
@@ -331,7 +366,7 @@ impl Hud {
     }
 
     pub(super) fn place_on_pointer_screen(&mut self, overlay: &OverlayHandle<Hud>) {
-        let Some((mut metrics, primary_top, _, _)) =
+        let Some((mut metrics, primary_top, _, display)) =
             MainThreadMarker::new().and_then(pointer_screen)
         else {
             return;
@@ -356,9 +391,13 @@ impl Hud {
                 &metrics,
                 content,
                 self.position == IndicatorPosition::Bottom,
+                crate::labs::hud_bottom_gap(),
             )
         });
         set_live_text(live_text_beside(&placed, &metrics, content, primary_top));
+        // `placed` carries the display's absolute coordinates, so moving the
+        // pointer to another display changes it (a mirrored set is one
+        // NSScreen); the pinned display is re-sent with the new rect.
         if self.placed == Some(placed) {
             return;
         }
@@ -369,14 +408,33 @@ impl Hud {
         self.placed = Some(placed);
         self.layout = placed.layout;
         self.model.set_island(placed.layout.island);
-        // Rune's global rect: points from the primary screen's top-left, y down.
         let (x, top) = placed.top_left;
-        overlay.set_display(DisplayTarget::Primary);
-        overlay.set_placement(Some(OverlayPlacement::Rect {
-            x: x as f32,
-            y: (primary_top - top) as f32,
-            width,
-            height,
-        }));
+        match display {
+            // Pin the overlay to the screen the placement was measured on,
+            // with a rect in that screen's own top-down points. In Rune's
+            // AppKit path this resolves to the same frame as the global Primary
+            // rect; the pin keeps the request's display explicit.
+            Some(id) => {
+                let (local_x, local_y) = hud_placement::local_rect(placed.top_left, metrics.frame);
+                overlay.set_display(DisplayTarget::Native(NativeDisplayId::MacOS(id)));
+                overlay.set_placement(Some(OverlayPlacement::Rect {
+                    x: local_x as f32,
+                    y: local_y as f32,
+                    width,
+                    height,
+                }));
+            }
+            // No screen number: keep the old global rect against the primary,
+            // the only space Rune documents for a Rect there.
+            None => {
+                overlay.set_display(DisplayTarget::Primary);
+                overlay.set_placement(Some(OverlayPlacement::Rect {
+                    x: x as f32,
+                    y: (primary_top - top) as f32,
+                    width,
+                    height,
+                }));
+            }
+        }
     }
 }

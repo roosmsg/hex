@@ -346,7 +346,7 @@ fn stream_bench(wav: &Path, speed: f64, selection: &TranscriptionSelection) -> R
 
     let engine = crate::transcription::engine::TranscriptionEngine::start(transcriber)?;
     let mut stream = engine
-        .begin()
+        .begin_ignoring_head(0)
         .ok_or_else(|| color_eyre::eyre::eyre!("this model cannot stream on this device"))?;
     let held = samples.len().saturating_sub(3_200);
     let feeding = Instant::now();
@@ -458,6 +458,11 @@ fn capture(
             AudioInputEvent::Timeout => {}
             AudioInputEvent::StreamFailed(error) => {
                 let error = format!("microphone stream stopped: {error}");
+                fail_capture(&events, &device_name, &error)?;
+                bail!(error);
+            }
+            AudioInputEvent::StreamReconfigured => {
+                let error = "microphone reconfigured".to_owned();
                 fail_capture(&events, &device_name, &error)?;
                 bail!(error);
             }

@@ -113,6 +113,12 @@ pub enum ControlCommand {
     },
     MeetingStop,
     MeetingCopyLast,
+    /// Move a finished meeting to the Trash, as the Meetings pane's Delete
+    /// does: its exported Markdown and notes file, then its recording folder.
+    MeetingDelete {
+        /// The exact id `hex meetings list --json` prints.
+        id: String,
+    },
     SettingsGet {
         #[serde(default)]
         key: Option<String>,
@@ -286,6 +292,19 @@ impl From<ControlError> for ControlReply {
     }
 }
 
+/// `hex meetings delete`: the meeting module's typed answer as a reply, so
+/// the refusal codes travel with the reply the wire and the CLI print.
+pub fn meeting_deleted(
+    answer: Result<crate::meeting::TrashedMeeting, crate::meeting::DeleteError>,
+) -> ControlReply {
+    match answer {
+        Ok(meeting) => {
+            ControlReply::done(format!("Deleted “{}”; moved to the Trash", meeting.title))
+        }
+        Err(error) => ControlReply::error(error.code(), error.message()),
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub struct ControlResponse {
     pub version: u32,
@@ -335,6 +354,10 @@ pub struct ScrawlCaptureOutcome {
     /// Spans of a written capture's audio that went missing.
     #[serde(default)]
     pub gaps: Option<usize>,
+    /// Where a written capture's audio stops (ms on its clock), when Hex had
+    /// to stop keeping it; the rest is silence.
+    #[serde(default)]
+    pub audio_stopped_at_ms: Option<u64>,
     /// Why a written capture has no transcript: `no_audio`, or the engine's
     /// reason.
     #[serde(default)]
@@ -376,6 +399,10 @@ pub struct ScrawlCaptureDetail {
     pub note: Option<String>,
     /// Why there is no transcript although there was audio.
     pub missing_transcript: Option<String>,
+    /// Where the capture's audio stops (ms on its clock), when Hex had to
+    /// stop keeping it; the rest is silence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub audio_stopped_at_ms: Option<u64>,
     pub marks: usize,
     pub keyframes: usize,
     pub video: Option<std::path::PathBuf>,
@@ -678,6 +705,9 @@ pub struct ModelReport {
     pub preparing: Option<String>,
     pub downloaded_bytes: u64,
     pub error: Option<String>,
+    /// The loaded model's device, when the running Hex has one to report.
+    #[serde(default)]
+    pub backend: Option<crate::transcription::SpeechBackend>,
     /// The model Hex runs in place of the saved one while that can't run.
     #[serde(default)]
     pub fallback: Option<FallbackReport>,
@@ -749,7 +779,7 @@ pub struct ModelInfo {
     pub selected: bool,
     pub streams: bool,
     /// How transcription takes the vocabulary: `prompt` (Whisper,
-    /// Qwen3-ASR), `bias` (Parakeet, with Labs › Vocabulary biasing), or
+    /// Qwen3-ASR), `bias` (Parakeet), or
     /// `none`.
     pub vocabulary: String,
     /// Deprecated: whether the model reads the vocabulary as its prompt,
@@ -1275,6 +1305,9 @@ mod tests {
             },
             ControlCommand::MeetingStop,
             ControlCommand::MeetingCopyLast,
+            ControlCommand::MeetingDelete {
+                id: "1790000500000-1002".into(),
+            },
             ControlCommand::SettingsGet { key: None },
             ControlCommand::SettingsSet {
                 key: "release_microphone_while_idle".into(),
@@ -1377,6 +1410,16 @@ mod tests {
             json,
             serde_json::json!({"version": 4, "command": "meeting-record", "title": "Standup"})
         );
+        // A meeting delete names its id, and nothing else.
+        let json = serde_json::to_value(ControlRequest::new(ControlCommand::MeetingDelete {
+            id: "1790000500000-1002".into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"version": 4, "command": "meeting-delete",
+                "id": "1790000500000-1002"})
+        );
         // Optional fields may be left out.
         let request: ControlRequest =
             serde_json::from_str(r#"{"version":4,"command":"quit"}"#).unwrap();
@@ -1403,6 +1446,42 @@ mod tests {
                 always: false,
             }
         );
+    }
+
+    #[test]
+    fn deleting_a_meeting_answers_its_refusal_code() {
+        let deleted = meeting_deleted(Ok(crate::meeting::TrashedMeeting {
+            id: "1790000500000-1002".into(),
+            title: "Design sync".into(),
+            markdown: true,
+        }));
+        assert_eq!(
+            deleted,
+            ControlReply::done("Deleted “Design sync”; moved to the Trash")
+        );
+        for (refusal, code) in [
+            (crate::meeting::DeleteRefusal::Unknown, "not-found"),
+            (
+                crate::meeting::DeleteRefusal::Recording,
+                "meeting-recording",
+            ),
+            (
+                crate::meeting::DeleteRefusal::Transcribing,
+                "meeting-transcribing",
+            ),
+            (crate::meeting::DeleteRefusal::Notes, "meeting-notes"),
+            (
+                crate::meeting::DeleteRefusal::FinalPending,
+                "meeting-final-pending",
+            ),
+            (crate::meeting::DeleteRefusal::Busy, "busy"),
+        ] {
+            assert_eq!(
+                meeting_deleted(Err(refusal.into())),
+                ControlReply::error(code, refusal.message()),
+                "{refusal:?}"
+            );
+        }
     }
 
     #[test]
@@ -1440,6 +1519,7 @@ mod tests {
                     stage: "done".into(),
                     words: Some(3),
                     gaps: Some(1),
+                    audio_stopped_at_ms: None,
                     missing_transcript: None,
                 }),
             })),

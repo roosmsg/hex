@@ -22,7 +22,7 @@ use super::controls::{
 };
 use super::lists::{LIST_COLUMN_PL, list_row, remove_button, source_list};
 use super::models::{self, Target};
-use super::{Menu, Ui, speech_model};
+use super::{Menu, Ui};
 use crate::app_settings::{AppSettings, DictationMode};
 use crate::application_catalog::InstalledApplication;
 use crate::desktop::file_dialog::{Choice, Dialog, Filter, Pending, Target as DialogTarget};
@@ -32,6 +32,7 @@ use crate::dictation::text_replacements::TextReplacement;
 use crate::personal_commands::{HostState, StatusSnapshot, StatusTransformation};
 use transformations::transformations;
 
+mod neutral_voice;
 mod transformations;
 
 const LIST_WIDTH: f32 = 240.0;
@@ -396,6 +397,15 @@ impl ModesPane {
         };
         let application = applications.iter().find(|a| a.name == name)?;
         self.icon(&application.path)
+    }
+
+    /// The icon for an application by its bundle ID (macOS) or executable,
+    /// once the catalog lists it.
+    pub(super) fn app_icon(&self, id: &str) -> Option<rune::Pixels> {
+        let Applications::Loaded(applications) = &self.applications else {
+            return None;
+        };
+        self.icon(&crate::application_catalog::find(applications, id)?.path)
     }
 
     pub(super) fn ensure_applications(&mut self) {
@@ -809,7 +819,7 @@ fn mode_row(
     selected: bool,
     selection: Selection,
 ) -> El {
-    list_row(p, key, name, icons, summary, selected, move |ui| {
+    list_row(p, key, None, name, icons, summary, selected, move |ui| {
         select_mode(ui, selection)
     })
 }
@@ -869,17 +879,17 @@ fn basics(
     layer: &mut Vec<El>,
 ) -> El {
     if selection == Selection::Default {
-        let mut rows = vec![setting_row(
+        return card(
             p,
-            "global",
-            tr("Global"),
-            Some(tr("Used unless a more specific mode matches.")),
-            el().key("none"),
-        )];
-        if let Some(speech) = speech_row(ui, p, selection, current, layer) {
-            rows.push(speech);
-        }
-        return card(p, "basics-card", rows);
+            "basics-card",
+            vec![setting_row(
+                p,
+                "global",
+                tr("Global"),
+                Some(tr("Used unless a more specific mode matches.")),
+                el().key("none"),
+            )],
+        );
     }
     let name = TextInput::new(&ui.modes.editor.name)
         .placeholder(tr("Mode name"))
@@ -926,9 +936,6 @@ fn basics(
             chips,
         ),
     ];
-    if let Some(speech) = speech_row(ui, p, selection, current, layer) {
-        rows.push(speech);
-    }
     let picking = ui.modes.application_picker_open && ui.modes.picker_target == PickerTarget::Mode;
     if let Some(error) = ui.modes.application_error.as_ref().filter(|_| !picking) {
         rows.push(note("application-error", error, p.danger()));
@@ -943,48 +950,6 @@ fn basics(
         );
     }
     card(p, "basics-card", rows)
-}
-
-/// The selected mode's speech model and language, while Labs › Switch model
-/// with app is on; None leaves the Modes pane exactly as it was.
-fn speech_row(
-    ui: &Ui,
-    p: Paint,
-    selection: Selection,
-    current: &DictationMode,
-    layer: &mut Vec<El>,
-) -> Option<El> {
-    if !speech_model::enabled(ui) {
-        return None;
-    }
-    let suffix = match selection {
-        Selection::Default => "global".to_string(),
-        Selection::Custom(index) => index.to_string(),
-    };
-    let key = format!("mode-speech-{suffix}");
-    let model_key = format!("mode-speech-model-{suffix}");
-    let language_key = format!("mode-speech-language-{suffix}");
-    Some(speech_model::setting(
-        ui,
-        p,
-        speech_model::SpeechRow {
-            key: &key,
-            model_key: &model_key,
-            language_key: &language_key,
-            title: tr("Speech model"),
-            description: None,
-            choice: current.speech.clone(),
-            model_menu: Menu::ModeSpeechModel(selection),
-            language_menu: Menu::ModeSpeechLanguage(selection),
-        },
-        // A new choice starts on the model's last-used language, or the
-        // saved one when that model has no recent choice.
-        |_, fallback| fallback.to_owned(),
-        move |ui, choice| {
-            update_mode(ui, |mode| mode.speech = choice);
-        },
-        layer,
-    ))
 }
 
 /// One chosen application: its icon once the catalog lists it, its name,
@@ -1289,7 +1254,11 @@ fn processing(
             None,
             tr("OpenCode transformation"),
         );
-        return section(p, "processing", tr("Processing"), vec![row]);
+        let mut rows = vec![row];
+        if let Some(neutral) = neutral_voice::row(ui, p) {
+            rows.push(neutral);
+        }
+        return section(p, "processing", tr("Processing"), rows);
     }
     let enabled = current.post_processing.enabled;
     let can_toggle = enabled || ui.models.available();
@@ -1315,6 +1284,11 @@ fn processing(
         reason,
         toggle,
     )];
+    // Labs › Neutral voice replaces the rewrite for this mode, so the row sits
+    // beside the rewrite toggle rather than inside it.
+    if let Some(neutral) = neutral_voice::row(ui, p) {
+        rows.push(neutral);
+    }
     if enabled {
         rows.extend(models::rows(ui, p, Target::Mode(selection), layer));
         rows.push(setting_row(
@@ -1447,6 +1421,33 @@ pub(super) fn fixture_catalog(ui: &mut Ui) {
             icon,
         )
     });
+    ui.modes.icons.get_mut().extend(icons);
+}
+
+/// The catalog with the call apps the Calls fixtures name by bundle ID,
+/// each with a stand-in icon.
+pub(super) fn fixture_call_catalog(ui: &mut Ui) {
+    fixture_catalog(ui);
+    let calls = [
+        ("Slack", "com.tinyspeck.slackmacgap", [74, 21, 75]),
+        ("zoom.us", "us.zoom.xos", [11, 92, 255]),
+    ];
+    let cache = ui
+        .modes
+        .icon_cache
+        .get_or_insert_with(|| rune::ImageCache::new(std::sync::Arc::new(|| {})));
+    let icons = calls.map(|(name, _, rgb)| {
+        let icon = cache.rgba(FIXTURE_ICON, FIXTURE_ICON, fixture_icon(rgb));
+        let _ = icon.wait();
+        (PathBuf::from(format!("/Applications/{name}.app")), icon)
+    });
+    if let Applications::Loaded(applications) = &mut ui.modes.applications {
+        applications.extend(calls.map(|(name, id, _)| InstalledApplication {
+            name: name.into(),
+            bundle_id: Some(id.into()),
+            path: PathBuf::from(format!("/Applications/{name}.app")),
+        }));
+    }
     ui.modes.icons.get_mut().extend(icons);
 }
 

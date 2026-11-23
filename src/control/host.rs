@@ -175,6 +175,7 @@ fn command(host: &dyn Host, command: ControlCommand) -> ControlReply {
             Ok(()) => ControlReply::done("Copied the last meeting transcript"),
             Err(error) => ControlReply::error("failed", format!("couldn't copy it: {error}")),
         },
+        ControlCommand::MeetingDelete { id } => super::meeting_deleted(crate::meeting::delete(&id)),
         ControlCommand::SettingsGet { key } => reply(load().and_then(|settings| {
             Ok(ControlReply::Settings {
                 settings: match key {
@@ -419,8 +420,9 @@ fn use_model(
     let selection = super::model_selection(&load()?, model, language)?;
     let definition = crate::transcription::models::definition(selection.model);
     let installed = crate::transcription::models::is_installed(definition, &selection.language);
+    let ready = crate::transcription::models::is_ready(definition, &selection.language);
     let state = host.state()?;
-    if same_model(&state.settings.transcription, &selection) && installed {
+    if same_model(&state.settings.transcription, &selection) && ready {
         return Ok(ControlReply::unchanged(format!(
             "{} ({}) is already in use",
             definition.name, selection.language
@@ -458,22 +460,24 @@ fn wait_for_model(
     selection: &TranscriptionSelection,
 ) -> Result<ControlReply, ControlError> {
     let name = crate::transcription::models::definition(selection.model).name;
+    // What the listener runs: the saved selection, or a lost import's fallback.
+    let matches = |settings: &crate::app_settings::AppSettings| {
+        same_model(&settings.transcription, selection)
+            || same_model(
+                &crate::transcription::custom_models::runnable(&settings.transcription),
+                selection,
+            )
+    };
+    let ready = || {
+        crate::transcription::models::validate(selection)
+            .is_ok_and(|model| crate::transcription::models::is_ready(model, &selection.language))
+    };
     let started = Instant::now();
     let mut seen_preparing = false;
     while started.elapsed() < CONFIRM_WAIT {
         std::thread::sleep(Duration::from_millis(100));
         let state = host.state()?;
-        let preparing = state.transcription.preparing.is_some();
-        seen_preparing |= preparing;
-        if preparing {
-            continue;
-        }
-        if same_model(&state.settings.transcription, selection) {
-            return Ok(ControlReply::done(format!(
-                "Switched to {name} ({})",
-                selection.language
-            )));
-        }
+        // A check that failed reports its reason, never a switch.
         if let Some(error) = &state.transcription.error
             && (seen_preparing || started.elapsed() > Duration::from_secs(1))
         {
@@ -481,6 +485,19 @@ fn wait_for_model(
                 "failed",
                 format!("couldn't switch to {name}: {error}"),
             ));
+        }
+        let preparing = state.transcription.preparing.is_some();
+        seen_preparing |= preparing;
+        if preparing {
+            continue;
+        }
+        // Only a model Hex can actually run counts as switched: a saved
+        // file may still be waiting for its check.
+        if ready() && matches(&state.settings) {
+            return Ok(ControlReply::done(format!(
+                "Switched to {name} ({})",
+                selection.language
+            )));
         }
     }
     Ok(ControlReply::done(format!(
@@ -493,12 +510,16 @@ fn clear_history(host: &dyn Host) -> Result<ControlReply, ControlError> {
         .history()
         .ok_or_else(|| ControlError::new("unavailable", "history couldn't be opened"))?;
     let count = history.search("").len();
-    if count == 0 {
+    let rollup = history.has_usage();
+    if count == 0 && !rollup {
         return Ok(ControlReply::unchanged("History is already empty"));
     }
     history
         .clear()
         .map_err(|error| ControlError::new("failed", format!("couldn't clear history: {error}")))?;
+    if count == 0 {
+        return Ok(ControlReply::done("Cleared history stats"));
+    }
     Ok(ControlReply::done(format!(
         "Cleared {count} dictation{}",
         if count == 1 { "" } else { "s" }
@@ -581,6 +602,7 @@ fn status(host: &dyn Host) -> Result<ControlReply, ControlError> {
                 .map(|model| model.as_str().into()),
             downloaded_bytes: state.transcription.downloaded_bytes,
             error: state.transcription.error.clone(),
+            backend: state.transcription.backend.clone(),
             ..ModelReport::saved(&settings.transcription)
         },
         features: FeatureReport {
@@ -622,6 +644,8 @@ mod tests {
         unresponsive: bool,
         quits: Mutex<Vec<bool>>,
         dictations: Mutex<Vec<CaptureAction>>,
+        history: Option<crate::history::History>,
+        backend: Option<crate::transcription::SpeechBackend>,
     }
 
     impl Host for FakeHost {
@@ -644,6 +668,7 @@ mod tests {
                     preparation_stage: None,
                     selection: Default::default(),
                     preparing: None,
+                    backend: self.backend.clone(),
                 },
                 update: DesktopUpdateStatus::Current,
                 window_open: false,
@@ -683,7 +708,7 @@ mod tests {
             Ok(())
         }
         fn history(&self) -> Option<crate::history::History> {
-            None
+            self.history.clone()
         }
         fn show_window(&self, _: Option<Pane>) -> Result<(), ControlError> {
             Ok(())
@@ -725,6 +750,38 @@ mod tests {
             ControlReply::Error { code, .. } => code,
             _ => "ok",
         }
+    }
+
+    #[test]
+    fn clearing_history_with_only_a_usage_rollup_still_deletes_it() {
+        let directory =
+            std::env::temp_dir().join(format!("hex-control-clear-usage-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&directory);
+        std::fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("history.json");
+        let history = crate::history::History::new(crate::history::HistoryStore::open(
+            path.clone(),
+            crate::history::HistoryRetention::Week,
+            crate::history::now_ms(),
+        ));
+        crate::history::usage::count(
+            &crate::history::usage::path(&path),
+            crate::history::now_ms(),
+            4,
+            1_000,
+        )
+        .unwrap();
+        assert!(history.has_usage());
+
+        let host = FakeHost {
+            history: Some(history.clone()),
+            ..Default::default()
+        };
+        let reply = ask(&host, ControlCommand::HistoryClear);
+        assert!(matches!(reply, ControlReply::Done { changed: true, .. }));
+        assert!(!history.has_usage());
+        assert!(history.search("").is_empty());
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]
@@ -785,6 +842,22 @@ mod tests {
                 "ok"
             );
         }
+    }
+
+    #[test]
+    fn status_reports_the_published_speech_backend() {
+        let host = FakeHost {
+            backend: Some(crate::transcription::SpeechBackend {
+                kind: "vulkan".into(),
+                device: "AMD Radeon RX 9060 XT".into(),
+                crash_fallback: false,
+            }),
+            ..Default::default()
+        };
+        let ControlReply::Status(status) = ask(&host, ControlCommand::Status) else {
+            panic!("expected status");
+        };
+        assert_eq!(status.model.backend, host.backend);
     }
 
     #[test]

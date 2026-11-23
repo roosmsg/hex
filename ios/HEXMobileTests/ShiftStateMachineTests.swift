@@ -88,6 +88,37 @@ final class ShiftStateMachineTests: XCTestCase {
         XCTAssertTrue(shift.isUppercase)
     }
 
+    /// Auto-capitalization's shift is not a shift you pressed: caps lock and your own press are
+    /// `isUserShift`, and only those type the Dvorak punctuation keys' symbols.
+    func testAutoCapsIsNotAUserShift() {
+        var shift = ShiftStateMachine()
+        shift.refreshAutoCapitalization(true)
+        XCTAssertTrue(shift.isUppercase)
+        XCTAssertFalse(shift.isUserShift)
+        shift.didType()
+        XCTAssertFalse(shift.isUserShift)
+
+        shift.shiftDown(now: 0)
+        XCTAssertTrue(shift.isUserShift, "a press")
+        shift.didType()
+        shift.shiftUp()
+        shift.shiftDown(now: 1)
+        shift.shiftUp()
+        XCTAssertEqual(shift.state, .on)
+        XCTAssertTrue(shift.isUserShift, "one-shot from a tap")
+        shift.didType()
+        XCTAssertFalse(shift.isUserShift)
+
+        shift.refreshAutoCapitalization(true)
+        XCTAssertFalse(shift.isUserShift, "auto-caps again")
+        shift.shiftDown(now: 5)
+        shift.shiftUp()
+        shift.shiftDown(now: 5.1)
+        shift.shiftUp()
+        XCTAssertEqual(shift.state, .locked)
+        XCTAssertTrue(shift.isUserShift, "caps lock")
+    }
+
     // MARK: - Auto-capitalization
 
     func testSentenceCapitalization() {
@@ -123,6 +154,10 @@ final class ShiftStateMachineTests: XCTestCase {
         XCTAssertTrue(AutoCapitalization.shouldCapitalize(mode: .allCharacters, before: "abc", hasText: true))
         XCTAssertTrue(AutoCapitalization.shouldCapitalize(mode: .words, before: "Jane ", hasText: true))
         XCTAssertFalse(AutoCapitalization.shouldCapitalize(mode: .words, before: "Ja", hasText: true))
+        // Greek's ; is its question mark: the system Greek keyboard capitalizes after "; ".
+        XCTAssertTrue(AutoCapitalization.shouldCapitalize(mode: .sentences, before: "Τι κάνεις; ", hasText: true, language: .greek))
+        XCTAssertTrue(AutoCapitalization.shouldCapitalize(mode: .sentences, before: "Τι κάνεις\u{037E} ", hasText: true, language: .greek))
+        XCTAssertFalse(AutoCapitalization.shouldCapitalize(mode: .sentences, before: "first; ", hasText: true))
         XCTAssertEqual(AutoCapitalization.Mode(UITextAutocapitalizationType.none), .none)
         XCTAssertEqual(AutoCapitalization.Mode(nil), .sentences)
     }
@@ -173,5 +208,16 @@ final class ShiftStateMachineTests: XCTestCase {
         XCTAssertEqual(KeyboardFieldRouting.route(for: .numberPad), .handOff)
         XCTAssertEqual(KeyboardFieldRouting.route(for: .decimalPad), .handOff)
         XCTAssertEqual(KeyboardFieldRouting.route(for: .asciiCapableNumberPad), .handOff)
+    }
+
+    /// A number pad goes to the next keyboard where iOS asks for a globe, but not where Apple's
+    /// keyboard is split (the Duo unfolded and upright): that switch can end the host app there
+    /// (TestFlight build 121), so Hex stays on its 123 page.
+    func testNumberPadsStayOnHexWhereApplesKeyboardSplits() {
+        XCTAssertTrue(KeyboardFieldRouting.handsOffNumberPad(needsInputModeSwitchKey: true, posture: .phone))
+        XCTAssertFalse(KeyboardFieldRouting.handsOffNumberPad(needsInputModeSwitchKey: false, posture: .phone), "iOS's own globe")
+        XCTAssertTrue(KeyboardFieldRouting.handsOffNumberPad(needsInputModeSwitchKey: true, posture: .cover))
+        XCTAssertTrue(KeyboardFieldRouting.handsOffNumberPad(needsInputModeSwitchKey: true, posture: .unfoldedTall))
+        XCTAssertFalse(KeyboardFieldRouting.handsOffNumberPad(needsInputModeSwitchKey: true, posture: .unfoldedWide))
     }
 }

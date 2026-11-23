@@ -65,27 +65,30 @@ impl Feature {
     pub const fn group(self) -> Group {
         match self {
             Self::LiveText
+            | Self::FasterLiveText
             | Self::FailureNotices
             | Self::LiveTyping
             | Self::NotchIndicator
-            | Self::VocabularyBiasing
             | Self::ScreenVocabulary
+            | Self::LearnFromCorrections
             | Self::PauseBrowser
             | Self::KeepMicrophoneOpen
             | Self::SkipPauses
             | Self::VoiceFilter
             | Self::HideMenuBarIcon
-            | Self::QuitClosesWindow
-            | Self::SettingsSearch
             | Self::Appearance
-            | Self::ReleaseNotesLink
             | Self::SpeakersOnly
-            | Self::Playground => Group::Dictation,
+            | Self::Playground
+            | Self::StopPhrase
+            | Self::VocabularyFiles
+            | Self::HudHeight
+            | Self::VoiceIsolation => Group::Dictation,
             Self::SmartSpacing
             | Self::SpokenFormatting
             | Self::SpokenSymbols
             | Self::FillerWords
             | Self::CleanUpWithAppleIntelligence
+            | Self::NeutralVoice
             | Self::KeepOnClipboard
             | Self::CopyOnly
             | Self::ReturnToApp
@@ -97,35 +100,31 @@ impl Feature {
             | Self::OpenCodeInWsl
             | Self::ApiProcessing
             | Self::ApiTimestamps
-            | Self::ApiBrowserAccess
-            | Self::PrintStart
-            | Self::ShellCompletions
             | Self::YoloMode
             | Self::CursorContext
-            | Self::VoicePrompt => Group::Output,
+            | Self::VoicePrompt
+            | Self::ModesEditor
+            | Self::Signature
+            | Self::DictationStyle => Group::Output,
             Self::KeepRecordings
             | Self::HistoryStats
-            | Self::HistoryMultiSelect
-            | Self::RecentDictations => Group::History,
+            | Self::RecentDictations
+            | Self::CopyDictationAudio
+            | Self::PasteLastPicker => Group::History,
             Self::Meetings
             | Self::LiveChapters
-            | Self::SubtitleExport
-            | Self::StopWhenCallEnds
-            | Self::MovableMeetingCapsules
-            | Self::MeetingNotesVocabulary
-            | Self::MeetingFinishedEvent
-            | Self::FollowLiveTranscript
-            | Self::MoreCallApps
             | Self::GnomeMeetingCapsules
             | Self::MeetingImport
-            | Self::MeetingDescriptiveFilenames
-            | Self::MeetingNotesFile
-            | Self::ExpireMeetingAudio
-            | Self::CalendarMenu => Group::Meetings,
+            | Self::CalendarMenu
+            | Self::CalendarSelectAll => Group::Meetings,
             Self::Screenshots
             | Self::AnnotateReplay
             | Self::GnomeAnnotate
-            | Self::CopyCaptureZip => Group::Annotate,
+            | Self::AnnotatePointerScreen
+            | Self::CopyCaptureZip
+            | Self::AnnotateAgentTools
+            | Self::AnnotateAgentInstall
+            | Self::DictateWhileAnnotating => Group::Annotate,
             Self::MouseShortcuts
             | Self::SecondDictationShortcut
             | Self::MoreDictationShortcuts
@@ -135,19 +134,20 @@ impl Feature {
             | Self::DoubleTapModifiers
             | Self::StandaloneSpecialKeys
             | Self::SectionKeyAlone
+            | Self::MicrophoneKeyAlone
             | Self::ShareShortcut
             | Self::CapsLockDictation
-            | Self::PauseMenu => Group::Shortcuts,
+            | Self::PauseMenu
+            | Self::HoldThroughKeys => Group::Shortcuts,
             Self::KeyboardModelSwitching
-            | Self::AppModelSwitching
             | Self::UnloadIdle
             | Self::PickerSortFilter
             | Self::BenchmarkDetails
-            | Self::PickerActiveFirst
             | Self::ModelInPlace
             | Self::KQuantModels
             | Self::PickerDownloaded
-            | Self::ParakeetUltra => Group::Models,
+            | Self::ParakeetUltra
+            | Self::DropTranscribe => Group::Models,
         }
     }
 }

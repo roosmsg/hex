@@ -94,7 +94,7 @@ impl HotkeyModifiers {
         }
     }
 
-    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     pub const fn control() -> Self {
         Self {
             control: Some(ModifierSide::Either),
@@ -374,6 +374,11 @@ pub(super) const MOUSE_INPUT_CODES: std::ops::Range<u16> = 0x8000..0x8020;
 /// keyboards (`kVK_ISO_Section`). Layouts label it § or a dead key such as
 /// `^`, `´`, or `` ` ``.
 pub const ISO_SECTION_KEY_CODE: u16 = 10;
+
+/// macOS's virtual key code for the microphone (dictation) key in a laptop
+/// keyboard's top row, in F5's position. Every press reports it with
+/// SecondaryFn set, and it types nothing.
+pub const MICROPHONE_KEY_CODE: u16 = 176;
 
 impl HotkeyKey {
     /// macOS mouse buttons occupy a separate input-code range, beyond every
@@ -683,9 +688,14 @@ impl<'de> Deserialize<'de> for HotkeyBinding {
 }
 
 impl Default for HotkeyBinding {
-    /// Option on macOS, Ctrl+Space on Windows, Alt+Space on Linux, and
+    /// Option on macOS, Left Alt on Windows, Alt+Space on Linux, and
     /// Ctrl+Alt+Space on GNOME, whose window menu takes Alt+Space (#723), and
     /// on KDE Plasma, whose KRunner does (#898).
+    ///
+    /// Windows takes one modifier alone, and the left Alt sits under the
+    /// thumb where the Mac's Option does (#2278). It is the left one only:
+    /// Windows sends AltGr as a synthesized Left Ctrl plus Right Alt, and a
+    /// shortcut that took either Alt would press on every AltGr character.
     fn default() -> Self {
         #[cfg(target_os = "macos")]
         let binding = Self {
@@ -693,7 +703,13 @@ impl Default for HotkeyBinding {
             key: None,
         };
         #[cfg(target_os = "windows")]
-        let binding = Self::chord(HotkeyModifiers::control(), "space");
+        let binding = Self {
+            modifiers: HotkeyModifiers {
+                option: Some(ModifierSide::Left),
+                ..HotkeyModifiers::default()
+            },
+            key: None,
+        };
         #[cfg(target_os = "linux")]
         let binding =
             Self::linux_dictation_default(crate::linux::portal::desktop_takes_alt_space());
@@ -787,6 +803,34 @@ impl HotkeyBinding {
                 ..Default::default()
             },
             "4",
+        );
+        binding
+    }
+
+    /// Command-Shift-5, macOS's own screenshot toolbar (Labs › Screenshots
+    /// records with it): the "5" key's ANSI position. Elsewhere
+    /// Control-Shift-5, though nothing records there.
+    pub fn screenshot_record_default() -> Self {
+        #[cfg(target_os = "macos")]
+        let binding = Self {
+            modifiers: HotkeyModifiers {
+                command: Some(ModifierSide::Either),
+                shift: Some(ModifierSide::Either),
+                ..Default::default()
+            },
+            key: Some(HotkeyKey {
+                code: 23,
+                label: "5".into(),
+            }),
+        };
+        #[cfg(not(target_os = "macos"))]
+        let binding = Self::chord(
+            HotkeyModifiers {
+                control: Some(ModifierSide::Either),
+                shift: Some(ModifierSide::Either),
+                ..Default::default()
+            },
+            "5",
         );
         binding
     }
@@ -1116,13 +1160,14 @@ impl RuntimeHotkey {
 }
 
 /// macOS virtual key codes whose events always carry SecondaryFn: F1–F20,
-/// the arrows, Home, End, Page Up, Page Down, Forward Delete, and Help.
+/// the arrows, Home, End, Page Up, Page Down, Forward Delete, and Help, plus
+/// the microphone (dictation) key on laptop keyboards.
 pub(super) fn key_reports_function_flag(code: u16) -> bool {
     const CODES: [u16; 30] = [
         122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90,
         123, 124, 125, 126, 115, 119, 116, 121, 117, 114,
     ];
-    CODES.contains(&code)
+    CODES.contains(&code) || code == MICROPHONE_KEY_CODE
 }
 
 pub fn modifiers_from_flags(flags: u64) -> HotkeyModifiers {
@@ -1348,7 +1393,7 @@ pub struct RuntimeHotkeys {
     pub paste_meeting: Option<RuntimeHotkey>,
     /// The capture shortcut, while captures are on (`cfg(hex_capture)`).
     pub capture: Option<RuntimeHotkey>,
-    /// Labs › Annotate 15 s replay shortcut (macOS 27+), while on and bound.
+    /// Labs › Annotate last 15 seconds shortcut (macOS 27+), while on and bound.
     pub capture_replay: Option<RuntimeHotkey>,
     /// Dictate without processing, while it is bound.
     pub raw_dictation: Option<RuntimeHotkey>,

@@ -9,6 +9,28 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::atomic::Ordering;
 
+#[test]
+fn old_yolo_durations_leave_the_switch_and_apps_alone() {
+    for seconds in [1, 2, 3, 5, 10] {
+        for enabled in [false, true] {
+            for apps in [vec![], vec!["Messages", "Slack"]] {
+                let (settings, repaired) = decode_value(&mut json!({"labs": {
+                    "yolo_mode": enabled, "yolo_mode_apps": apps, "yolo_mode_seconds": seconds
+                }}));
+                assert!(!repaired);
+                assert_eq!(settings.labs.yolo_mode, enabled);
+                assert_eq!(settings.labs.yolo_mode_apps, apps);
+                assert!(
+                    serde_json::to_value(&settings.labs)
+                        .unwrap()
+                        .get("yolo_mode_seconds")
+                        .is_none()
+                );
+            }
+        }
+    }
+}
+
 struct SettingsFile {
     path: PathBuf,
 }
@@ -69,6 +91,21 @@ fn base_aware_updates_keep_other_writers_and_nested_unknown_fields() {
     assert_eq!(saved["meetings"]["future"]["mode"], "keep");
 }
 
+/// The retired Yearly stats switch is an understood migration input, not an
+/// unknown setting: a load never copies it back into the file, and its choice
+/// lands on Dictation stats.
+#[test]
+fn a_retired_yearly_stats_key_never_returns_to_the_file() {
+    let file = SettingsFile::new(br#"{"labs":{"yearly_stats":true}}"#);
+    AppSettings::load_from(&file.path).unwrap();
+    let saved: Value = serde_json::from_slice(&fs::read(&file.path).unwrap()).unwrap();
+    assert!(
+        saved["labs"].get("yearly_stats").is_none(),
+        "the retired key is stripped: {saved}"
+    );
+    assert_eq!(saved["labs"]["history_stats"], json!(true));
+}
+
 #[test]
 fn simultaneous_updates_serialize_the_read_merge_and_write() {
     let file = SettingsFile::new(b"{}");
@@ -109,6 +146,74 @@ fn a_delayed_read_cannot_republish_runtime_values_from_before_a_save() {
         .unwrap();
     base.apply_runtime();
     assert!(crate::app_settings::microphone_policy().release_while_idle);
+}
+
+/// Removing the per-app editor must not erase or enable a saved choice. An
+/// unrelated edit must also keep the separate second and four extra bindings.
+#[test]
+fn saved_mode_choices_and_five_shortcuts_survive_an_unrelated_edit() {
+    for enabled in [false, true] {
+        let binding = |key| HotkeyBinding {
+            modifiers: HotkeyModifiers::control_option(),
+            key: Some(HotkeyKey::named(key)),
+        };
+        let rows: Vec<_> = [
+            ("f1", "tap"),
+            ("f2", "hold"),
+            ("f3", "double_tap"),
+            ("f4", "hold_or_double_tap"),
+        ]
+        .into_iter()
+        .map(|(key, mode)| json!({"binding": binding(key), "mode": mode}))
+        .collect();
+        let speech = json!({"model":"parakeet_v3", "language":"es"});
+        let file = SettingsFile::new(&serde_json::to_vec(&json!({
+            "labs": {"app_model_switching": enabled, "second_dictation_shortcut":true, "more_dictation_shortcuts":true},
+            "dictation_processing": {"default_mode":{"speech":speech}, "modes":[{"name":"Work", "speech":speech}]},
+            "second_dictation_hotkey":binding("f5"), "extra_dictation_hotkeys":rows,
+        })).unwrap());
+        let before = AppSettings::load_from(&file.path).unwrap();
+        let mut edit = before.clone();
+        edit.sound_effects = !before.sound_effects;
+        before
+            .update_at(&edit, &file.path, Policy::default())
+            .unwrap();
+        let after = AppSettings::load_from(&file.path).unwrap();
+        assert_eq!(after.labs.app_model_switching, enabled);
+        for mode in [
+            &after.dictation_processing.default_mode,
+            &after.dictation_processing.modes[0],
+        ] {
+            assert_eq!(serde_json::to_value(&mode.speech).unwrap(), speech);
+        }
+        assert_eq!(after.second_dictation_hotkey, Some(binding("f5")));
+        assert_eq!(
+            serde_json::to_value(after.extra_dictation_hotkeys).unwrap(),
+            json!(rows)
+        );
+    }
+}
+
+/// The embedded service `hex transcribe` and the TypeScript SDK start reads
+/// the saved vocabulary, its boost, and the Labs switches with the decode a
+/// launch uses, writing nothing back. They produce the expected bias.
+#[test]
+fn the_embedded_service_reads_the_saved_vocabulary() {
+    let _restore = RestoredRuntime;
+    let file = SettingsFile::new(br#"{"vocabulary":["Rune"],"vocabulary_boost":"strong"}"#);
+    let settings = AppSettings::apply_for_embedded_service_at(&file.path).expect("read settings");
+    assert_eq!(
+        settings.vocabulary,
+        [VocabularyEntry {
+            term: "Rune".into(),
+            sounds_like: Vec::new(),
+        }]
+    );
+    let bias =
+        crate::dictation::vocabulary::bias_for(&settings.vocabulary, settings.vocabulary_boost)
+            .expect("bias the saved terms");
+    assert_eq!(bias.0, ["Rune"]);
+    assert_eq!(bias.1.boost, Some(4.0));
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -378,6 +483,22 @@ fn an_invalid_appearance_theme_resets_only_that_field() {
 }
 
 #[test]
+fn an_invalid_dictation_style_choice_resets_only_that_field() {
+    let original =
+        br#"{"labs":{"dictation_style":true,"dictation_style_choice":"song","live_text":true}}"#;
+    let file = SettingsFile::new(original);
+    let settings = AppSettings::load_from(&file.path).unwrap();
+    assert!(settings.labs.dictation_style);
+    assert_eq!(
+        settings.labs.dictation_style_choice,
+        crate::app_settings::DictationStyle::Polished
+    );
+    assert!(settings.labs.live_text);
+    assert_eq!(fs::read(&file.path).unwrap(), original);
+    assert!(file.backups().is_empty());
+}
+
+#[test]
 fn a_microphone_linger_window_outside_the_choices_loads_the_default() {
     let original = br#"{"labs":{"keep_microphone_open":true,"keep_microphone_open_seconds":45,"live_text":true}}"#;
     let file = SettingsFile::new(original);
@@ -430,22 +551,51 @@ fn an_invalid_voice_prompt_phrase_loads_the_default_and_keeps_its_switch() {
 }
 
 #[test]
-fn browser_origins_load_normalized_and_ignore_anything_that_is_not_one() {
-    let file = SettingsFile::new(
-        br#"{"labs":{"api_browser_access":true,"api_browser_origins":["HTTPS://Example.com:443/","*","not an origin","http://localhost:5173"]}}"#,
-    );
+fn an_invalid_stop_phrase_loads_the_default_and_keeps_its_switch() {
+    let original = br#"{"labs":{"stop_phrase":true,"stop_phrase_text":"nope","live_text":true}}"#;
+    let file = SettingsFile::new(original);
     let settings = AppSettings::load_from(&file.path).unwrap();
-    assert!(settings.labs.api_browser_access);
-    assert_eq!(
-        settings.labs.api_browser_origins,
-        vec!["https://example.com", "http://localhost:5173"]
+    assert!(
+        settings.labs.stop_phrase,
+        "the switch stays as saved; only the phrase falls back"
     );
-    // The normalized list is what the next read sees, so an entry that
-    // isn't an origin can never widen what the local API allows.
-    let saved: Value = serde_json::from_slice(&fs::read(&file.path).unwrap()).unwrap();
     assert_eq!(
-        saved["labs"]["api_browser_origins"],
-        json!(["https://example.com", "http://localhost:5173"])
+        settings.labs.stop_phrase_text,
+        crate::dictation::stop_phrase::DEFAULT_PHRASE
+    );
+    assert!(settings.labs.live_text);
+    assert_eq!(fs::read(&file.path).unwrap(), original);
+    assert!(file.backups().is_empty());
+}
+
+#[test]
+fn an_invalid_signature_loads_the_default_and_keeps_its_switch() {
+    let original = br#"{"labs":{"signature":true,"signature_text":"two\nlines","live_text":true}}"#;
+    let file = SettingsFile::new(original);
+    let settings = AppSettings::load_from(&file.path).unwrap();
+    assert!(
+        settings.labs.signature,
+        "the switch stays as saved; only the text falls back"
+    );
+    assert_eq!(
+        settings.labs.signature_text,
+        crate::dictation::signature::DEFAULT_TEXT
+    );
+    assert!(settings.labs.live_text);
+    assert_eq!(fs::read(&file.path).unwrap(), original);
+    assert!(file.backups().is_empty());
+}
+
+#[test]
+fn an_empty_signature_stays_empty_and_appends_nothing() {
+    let original = br#"{"labs":{"signature":true,"signature_text":"","live_text":true}}"#;
+    let file = SettingsFile::new(original);
+    let settings = AppSettings::load_from(&file.path).unwrap();
+    assert!(settings.labs.signature);
+    assert!(settings.labs.signature_text.is_empty());
+    assert_eq!(
+        crate::dictation::signature::append("we ship friday", &settings.labs.signature_text, true),
+        None
     );
 }
 
@@ -633,6 +783,16 @@ fn bad_list_entries_do_not_discard_good_entries() {
     assert_eq!(settings.meetings.providers.len(), 2);
     assert_eq!(settings.meetings.providers[0].key, "good");
     assert_eq!(settings.meetings.providers[1].key, "kept");
+}
+
+#[test]
+fn obsolete_history_selection_lab_loads_without_repair() {
+    for old in [false, true] {
+        let json = format!(r#"{{"labs":{{"history_multi_select":{old},"keep_recordings":true}}}}"#);
+        let (settings, repaired) = decode(json.as_bytes());
+        assert!(!repaired);
+        assert!(settings.labs.keep_recordings);
+    }
 }
 
 #[test]
@@ -916,4 +1076,26 @@ fn a_managed_lock_reads_off_and_never_rewrites_the_saved_switch() {
     let (unmanaged, _) = AppSettings::read_managed_from(&file.path, Policy::default()).unwrap();
     assert!(unmanaged.meetings.enabled);
     assert!(unmanaged.labs.live_text);
+}
+
+/// A file whose Yearly stats switch predates the merge keeps that choice
+/// under a managed Labs lock: the lock reads Dictation stats off in memory,
+/// but the save must not write the false back with the migration recorded.
+#[test]
+fn a_managed_lock_saves_a_retired_yearly_stats_choice_as_dictation_stats() {
+    use crate::policy::{Lock, Policy};
+    let file = SettingsFile::new(br#"{"labs":{"yearly_stats":true}}"#);
+    let policy = Policy::default().with(Lock::Labs);
+    let (mut settings, _) = AppSettings::read_managed_from(&file.path, policy).unwrap();
+    assert!(!settings.labs.history_stats, "the lock reads the lab off");
+
+    settings.sound_effects = false;
+    settings.write_managed_to(&file.path, policy).unwrap();
+    let saved: serde_json::Value = serde_json::from_slice(&fs::read(&file.path).unwrap()).unwrap();
+    assert_eq!(
+        saved["labs"]["history_stats"],
+        json!(true),
+        "the file's own Yearly stats choice survives the lock"
+    );
+    assert!(saved["labs"].get("yearly_stats").is_none());
 }

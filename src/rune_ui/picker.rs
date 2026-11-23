@@ -35,7 +35,7 @@ const PANEL_WIDTH: f32 = compare::WIDTH;
 /// The full list's height: the window's less a margin above and below.
 const PANEL_HEIGHT: f32 = 680.0;
 
-/// A model is the active selection only once it is installed.
+/// A model is the active selection only once it is ready to run.
 pub(super) fn transcription_selection_is_active(
     selection: &TranscriptionSelection,
     model: &ModelDefinition,
@@ -109,8 +109,7 @@ pub(super) struct Picker {
     /// The card whose details are open (Parakeet Ultra's credit and
     /// published benchmarks).
     pub(super) details: super::model_details::DetailsState,
-    /// The model in use when the picker opened, which Labs › Model in use
-    /// first lists first; fixed until the picker closes.
+    /// The installed model in use when the picker opened, listed first; fixed until the picker closes.
     in_use_first: Option<TranscriptionModelId>,
 }
 
@@ -127,6 +126,21 @@ impl Picker {
             .is_ok_and(|model| self.installed(model, &settings.transcription.language))
     }
 
+    /// Whether `model` can run here. A fixture's installed stand-ins count as
+    /// ready; live, a catalog file another app downloaded must be checked
+    /// against its pin before Setup calls it ready (`models::is_ready`).
+    pub(super) fn ready(&self, model: &ModelDefinition, language: &str) -> bool {
+        match &self.installed {
+            Some(installed) => installed.contains(&model.id),
+            None => transcription_models::is_ready(model, language),
+        }
+    }
+
+    pub(super) fn selected_ready(&self, settings: &AppSettings) -> bool {
+        transcription_models::validate(&settings.transcription)
+            .is_ok_and(|model| self.ready(model, &settings.transcription.language))
+    }
+
     fn clear_deletion(&mut self) {
         self.deletion = None;
         self.deletion_error = None;
@@ -137,6 +151,7 @@ pub(super) fn open(ui: &mut Ui) {
     super::explainer::close(ui);
     super::sound_sets::close(ui);
     super::vocabulary::close(ui);
+    super::calls::close(ui);
     ui.open = None;
     ui.picker.open = true;
     ui.picker.clear_deletion();
@@ -147,7 +162,9 @@ pub(super) fn open(ui: &mut Ui) {
     ui.picker.downloaded_only = false;
     ui.picker.view = View::Compare;
     ui.picker.others_open = false;
-    ui.picker.in_use_first = (active_first_on(ui) && ui.picker.selected_installed(&ui.settings))
+    ui.picker.in_use_first = ui
+        .picker
+        .selected_installed(&ui.settings)
         .then_some(ui.settings.transcription.model);
 }
 
@@ -212,16 +229,10 @@ fn bytes_label(bytes: u64) -> String {
     }
 }
 
-/// Whether Labs › Model in use first is on.
-fn active_first_on(ui: &Ui) -> bool {
-    let feature = crate::labs::Feature::PickerActiveFirst;
-    feature.shipped() && feature.on(&ui.settings)
-}
-
 /// The model the comparison shows first: the one in use when the picker
-/// opened, while Labs › Model in use first is on.
+/// opened.
 fn pinned(ui: &Ui) -> Option<TranscriptionModelId> {
-    ui.picker.in_use_first.filter(|_| active_first_on(ui))
+    ui.picker.in_use_first
 }
 
 /// The model the full list leads with: [`pinned`], unless Labs › Sort and
@@ -230,13 +241,13 @@ fn list_first(ui: &Ui) -> Option<TranscriptionModelId> {
     pinned(ui).filter(|_| !sort_filter_on(ui) || ui.picker.sort == Sort::Recommended)
 }
 
-/// Whether Labs › Benchmark details is on.
+/// Whether Labs › Model test details is on.
 pub(super) fn benchmark_details_on(ui: &Ui) -> bool {
     let feature = crate::labs::Feature::BenchmarkDetails;
     feature.shipped() && feature.on(&ui.settings)
 }
 
-/// The badge a card shows. With Benchmark details on, "Most accurate" stays
+/// The badge a card shows. With Model test details on, "Most accurate" stays
 /// only when its figure is comparable with the other recommendations'.
 pub(super) fn shown_recommendation(
     recommendation: Option<Recommendation>,
@@ -379,8 +390,10 @@ pub(super) fn cancel(ui: &mut Ui) {
 pub(super) fn choose(ui: &mut Ui, model: &'static ModelDefinition) {
     ui.picker.clear_deletion();
     let current = &ui.settings.transcription;
-    let installed = ui.picker.installed(model, &current.language);
-    if transcription_selection_is_active(current, model, installed) {
+    // A file that is here but not checked is not active yet: choosing it
+    // sends it through the model preparation, which verifies and adopts it.
+    let ready = ui.picker.ready(model, &current.language);
+    if transcription_selection_is_active(current, model, ready) {
         close(ui);
         return;
     }
@@ -848,7 +861,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn selected_transcription_model_is_not_active_until_installed() {
+    fn selected_transcription_model_is_not_active_until_ready() {
         let selection = TranscriptionSelection::default();
         let model = transcription_models::definition(selection.model);
 
@@ -979,9 +992,8 @@ mod tests {
         assert!(benchmark_details_on(&ui));
     }
 
-    fn ui_with_active_first(on: bool) -> Ui {
-        let mut settings = AppSettings::default();
-        settings.labs.picker_active_first = on;
+    fn ui_with_installed_model() -> Ui {
+        let settings = AppSettings::default();
         let mut ui = Ui::with(settings, super::super::Service::Fixture(Vec::new()));
         ui.picker.installed = Some(vec![ui.settings.transcription.model]);
         ui
@@ -989,7 +1001,7 @@ mod tests {
 
     #[test]
     fn the_model_in_use_is_fixed_while_the_picker_is_open() {
-        let mut ui = ui_with_active_first(true);
+        let mut ui = ui_with_installed_model();
         let saved = ui.settings.transcription.model;
         open(&mut ui);
         assert_eq!(pinned(&ui), Some(saved));
@@ -1011,13 +1023,8 @@ mod tests {
     }
 
     #[test]
-    fn without_model_in_use_first_nothing_is_pinned() {
-        let mut ui = ui_with_active_first(false);
-        open(&mut ui);
-        assert_eq!(pinned(&ui), None);
-        assert_eq!(list_first(&ui), None);
-        // A model that isn't installed is never pinned.
-        let mut ui = ui_with_active_first(true);
+    fn an_uninstalled_model_is_never_pinned() {
+        let mut ui = ui_with_installed_model();
         ui.picker.installed = Some(Vec::new());
         open(&mut ui);
         assert_eq!(pinned(&ui), None);

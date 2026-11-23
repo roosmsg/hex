@@ -56,6 +56,7 @@ pub enum DictationIndicatorEvent {
     JobCompleted {
         job_id: u64,
     },
+    #[cfg_attr(target_os = "macos", allow(dead_code))]
     JobCancelled {
         job_id: u64,
     },
@@ -203,7 +204,7 @@ fn fill_island(tuning: Tuning, island: Option<Island>) -> Tuning {
     };
     let pitch = tuning.spacing;
     let edge = field_edge(&tuning);
-    let columns = ((island.plate_width() - 2.0 * edge) / pitch).floor() + 1.0;
+    let columns = tuning.columns_in(island.plate_width(), edge);
     let width = (columns - 1.0) * pitch + 2.0 * edge;
     Tuning {
         columns,
@@ -293,6 +294,29 @@ impl IndicatorModel {
     #[cfg(target_os = "macos")]
     pub fn tuning(&self) -> Tuning {
         self.tuning
+    }
+
+    /// Spreads the field over `room` pt from its `hold` end, as the island
+    /// spreads it across a notch, but at once and keeping every dot that
+    /// stays ([`Scope::span`]): for a field whose room follows a moving edge.
+    pub fn span(&mut self, room: f32, hold: dot_scope::Hold) {
+        self.scope.span(room, hold);
+    }
+
+    /// The frame as it stands, without advancing.
+    pub fn frame(&self) -> DotFrame {
+        DotFrame {
+            pose: self.scope.pose(),
+            tuning: self.scope.tuning(),
+            columns: self.scope.columns(),
+            rows: self.scope.rows(),
+            dots: self
+                .scope
+                .dots()
+                .iter()
+                .map(|value| value.map(|v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16))
+                .collect(),
+        }
     }
 
     /// Spreads Dot scope's field across the notch island it now sits in.
@@ -454,18 +478,7 @@ impl IndicatorModel {
             },
         );
         self.active = visible || !self.scope.settled();
-        DotFrame {
-            pose: self.scope.pose(),
-            tuning: self.scope.tuning(),
-            columns: self.scope.columns(),
-            rows: self.scope.rows(),
-            dots: self
-                .scope
-                .dots()
-                .iter()
-                .map(|value| value.map(|v| (v.clamp(0.0, 1.0) * 65535.0).round() as u16))
-                .collect(),
-        }
+        self.frame()
     }
 }
 
@@ -516,6 +529,7 @@ mod tests {
         assert_eq!(fill_island(tuning, None), tuning);
         let island = Island {
             notch: [185.0, 32.0],
+            bar: 0.0,
             width: 241.0,
             top: -64.0,
             ears: false,
@@ -736,6 +750,7 @@ mod tests {
         };
         let ears = Island {
             notch: [185.0, 32.0],
+            bar: 34.0,
             width: 253.0,
             top: -64.0,
             ears: true,

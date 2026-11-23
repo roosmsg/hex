@@ -34,14 +34,13 @@ Agents can [read retained transcripts](transcript-cli.md) and
 default, listed under collapsible groups (Dictation, Output, History,
 Meetings, Annotate, Shortcuts, Models) with only this OS's labs.
 Its Sort and filter models toggle (off by default) adds a sort and a saved-language filter to the
-Local transcription picker (#645); its Benchmark details toggle (off by
+Local transcription picker (#645); its Model test details toggle (off by
 default) shows each model's raw WER or CER with its language, dataset, source,
-and conditions (#647); its Settings search toggle (off by default) puts a
-search field at the top of General that filters its rows; its Release notes
+and conditions (#647); its Release notes
 link toggle (off by default) puts a link to this build's release notes in the
 sidebar footer; its Appearance toggle (off by default) forces the main window
-light or dark instead of following the OS, while the HUD and other overlays
-keep following it; its Screen vocabulary
+light or dark instead of following the OS. The dictation HUD and meeting
+recording pill always stay dark; other overlays follow the OS; its Words on screen
 toggle (off by default, macOS) uses names and terms visible in the focused
 window as temporary vocabulary for each dictation, read locally through
 Accessibility and never saved ([vocabulary.md](vocabulary.md)). Its Rewrite
@@ -53,6 +52,13 @@ byte unchanged. Its Clean up with Apple Intelligence toggle (off by default,
 macOS) gives each dictation its mode does not rewrite one short on-device pass
 that fixes clearly misheard words and spoken self-corrections, pasting the
 corrected text whenever Apple Intelligence is unavailable, slow, or refuses.
+Its Neutral voice toggle (off by default, macOS) rewrites a chosen mode's
+dictations into plain, neutral wording on this Mac instead of that mode's
+OpenCode rewrite and the cleanup, so the neutral pass never sends the text to
+OpenCode; the mode's transformations still run afterwards and may use the
+network if you wrote them that way, and Voice Action still uses OpenCode. A
+number, negation, or protected number run, link, path, code, or quote that
+does not survive verbatim keeps the corrected transcript.
 General › Advanced › Interface language offers Português (Brasil), and Hex
 uses it for any Portuguese system language (#867); it also offers Français,
 used for any French system language (#892), and Русский, used for any
@@ -60,15 +66,26 @@ Russian system language (#1317). None of these has had a native speaker's
 review yet. It offers 简体中文 (`zh`) and 繁體中文 (`zh-Hant`, #944);
 Traditional Chinese is drafted from the Simplified strings by a character and
 Taiwan-usage phrase converter (`desktop/i18n/traditional_chinese.rs`), not yet
-reviewed by a native speaker.
-The [vocabulary](vocabulary.md) biases transcription toward names you list.
+reviewed by a native speaker. Meeting times in the Meetings pane, the macOS
+calendar card, and the exported transcript and notes are 12-hour ("2:30 PM")
+in English and 24-hour ("14:30") in every other interface language.
+The [vocabulary](vocabulary.md) biases transcription toward names you list; its
+Labs › Vocabulary files toggle (off by default, every OS) imports terms from a
+CSV file into the Vocabulary sheet and exports the list as one.
 [Your own speech models](own-models.md) covers adding a GGUF file and using
 models another app already downloaded; its Labs › Smaller model files toggle
 (off by default, macOS) also accepts imports quantized to Q6_K, Q5_K, or Q4_K.
 [Annotate](capture.md) (macOS, Linux,
-and Windows) records the screen while you draw and talk and sends it to an agent.
+and Windows) records the screen while you draw and talk and sends it to an agent;
+its Labs › Agent tools for captures toggle (off by default, every OS) adds
+`hex annotate inspect`, `zoom`, `frames`, and `skill`, which read a bundle in
+the CLI process so a coding agent can see its summary, marks, a dense frame
+sheet, or a range of frames itself. Its Labs › Install agent skill from
+Annotate toggle (off by default, every OS) adds an Agents section that writes
+the `hex-annotate` skill into Claude Code, Codex, OpenCode, or Pi, and on macOS
+links `hex` onto PATH.
 [Screenshots](labs.md) (Labs, macOS) takes CleanShot-style ⌘⇧4 area and
-window screenshots.
+window screenshots, and with Annotate on records from a ⌘⇧5 toolbar.
 The other capabilities stay here until they need their own verification recipe.
 
 ## Get Ready
@@ -98,8 +115,11 @@ Install on Windows                        // setup.windows-installer
 ├── Setup.exe, per user, no admin -> managed versions\<version>\hex.exe
 │   ├── x64 without a Vulkan 1.2 driver -> installs; speech on the CPU + Settings note (#1240)
 │   ├── another version installed (e.g. self-updated) -> install this one over it
+│   ├── the setup engine is signed -> Smart App Control runs the copy extracted to %TEMP%
+│   │   (unsigned, it blocks setup: "Unable to execute file in the temporary directory", error 4551)
 │   └── finish -> Open Hex -> the first run downloads a model
 └── Settings › Apps -> uninstall every version, shortcut, Launch at login; keep data
+    └── the installed uninstaller is that same signed engine
 
 Install on Linux                          // setup.linux-installer
 └── curl … | sh -> signed feed -> verified artifact -> launcher + hex.service
@@ -129,8 +149,11 @@ frame. These checks do not exercise real speakers or a physical phone.
 
 The Windows installer is silently installed, reinstalled, installed over
 another version, and uninstalled on x64 and ARM64 runners by
-[test-windows-installer.ps1](../../scripts/test-windows-installer.ps1); no
-interactive install, SmartScreen prompt, or first launch on a real PC has been
+[test-windows-installer.ps1](../../scripts/test-windows-installer.ps1); with
+`-SignedEngine` it also checks that the installed uninstaller (the same engine
+bytes Setup extracts to `%TEMP%`) has a valid, timestamped Authenticode
+signature, and Release runs it that way. No interactive install, Smart App
+Control decision, SmartScreen prompt, or first launch on a real PC has been
 observed. The Linux library diagnosis has no automated check. The site's
 platform states were captured once in headless Chromium with `?platform=`.
 
@@ -355,9 +378,11 @@ General > Dictation > Speech model, then Language below it   // setup.language-s
 │       │   stops at its output limit still counts as warm (same as the menu bar)
 │       └── Saved -> Language row: "<Model> doesn't support Japanese, so the
 │           language changed to English" until the next choice
-├── Language -> Select of the saved model's languages (catalog order, Auto first
-│   when it detects, including a model that takes no language input); one
-│   language -> the field shows it, disabled
+├── Language -> Select of the saved model's languages (alphabetical by name,
+│   Auto first when it detects, including a model that takes no language
+│   input); one language -> the field shows it, disabled
+│   ├── Open the language menu -> It scrolls to the chosen language so its
+│   │   check is in view (`the_language_menu_opens_on_its_chosen_language`)
 │   └── Choose -> ChooseModel(same model, language): the same preparation as a
 │       model choice, so per-language assets (Apple Speech locales) install
 └── The saved TranscriptionSelection is always a pair the model supports
@@ -380,21 +405,29 @@ Language row is unexercised.
 
 ```ts
 Choose a supported language              // setup.language-conditioning; macOS + Linux picker
-├── Parakeet v3, Orukeet, and Parakeet Ultra -> Detect language from audio;
-│   also offered under Auto; the selected language does not constrain output
+├── Parakeet v3, Orukeet, Fluid Speech Pro, and Parakeet Ultra -> Detect
+│   language from audio; also offered under Auto; the selected language does
+│   not constrain output
 ├── Granite Speech 5.0 -> No language input; transcribes whichever of en, fr,
 │   de, es, pt, it, ja it hears, so it is offered under Auto too (#1252)
 ├── Whisper -> Use selected language to guide decoding; accuracy is not guaranteed
-├── Whisper (ivrit.ai's and NB-Whisper too), Qwen3-ASR 0.6B, QwenCleo-ASR 1.7B -> Vocabulary ->
-│   context prompt (vocabulary.md); output that only repeats it is dropped
+├── Whisper (ivrit.ai's, NB-Whisper's, and KB-Whisper's too), Qwen3-ASR 0.6B, QwenCleo-ASR 1.7B -> Vocabulary ->
+│   context prompt (vocabulary.md); output that only repeats it is dropped,
+│   and its listed "sounds like" spellings are corrected whole-word after
+│   the run
 ├── Hebrew -> ivrit.ai Whisper large-v3-turbo, always with the `he` hint (it
 │   lost Whisper's language detection); stock Whisper turbo also offers it
 ├── Russian -> GigaAM v3 (Russian only, no language input); Parakeet v3 and
 │   Whisper turbo also offer it
 ├── Norwegian -> NB-Whisper Medium, always with the `no` hint (Bokmål is all
 │   Hex measured); stock Whisper turbo also offers it (#1150)
+├── Swedish -> KB-Whisper Medium, always with the `sv` hint; its 6.6% WER on
+│   FLEURS Swedish is the model card's figure for its default checkpoint, not
+│   Hex's run; Parakeet v3 is Fastest there, and stock Whisper turbo also
+│   offers it (#1991)
 ├── Bangla -> Whisper only, with the `bn` hint; Auto lets Whisper guess per clip
-└── Khmer -> Whisper only, with the `km` hint; Auto lets Whisper guess per clip
+├── Khmer -> Whisper only, with the `km` hint; Auto lets Whisper guess per clip
+└── Azerbaijani -> Whisper only, with the `az` hint; Auto lets Whisper guess per clip
 ```
 
 Whisper and Qwen3-ASR (including QwenCleo) read the shared
@@ -417,11 +450,14 @@ Checks: `prompt_echo_is_dropped`, `speech_containing_the_hints_is_kept`,
 
 Models trained on subtitled video can end a clip with a subtitle credit nobody
 said, such as "Sous-titrage Société Radio-Canada" from Cohere Transcribe in
-French after a trailing pause (#1141), or "İzlediğiniz için teşekkür ederim"
-and "Altyazı M.K." from Whisper in Turkish (#1770). Every GGUF run and live
-stream drops a known credit only when it is the very end of the text (letters
-and digits compared, case and punctuation ignored, Turkish dotted and dotless
-`i` folded together), with its segment and words, in
+French after a trailing pause (#1141), "İzlediğiniz için teşekkür ederim" and
+"Altyazı M.K." from Whisper in Turkish (#1770), or "Продолжение следует",
+"Субтитры сделал DimaTorzok" ("делал" too), and "Редактор субтитров
+А.Семкин Корректор А.Егорова" from Whisper large-v3 and large-v3-turbo in
+Russian. Every GGUF run and live stream drops a known credit only when it is
+the very end of the text (letters and digits compared, case and punctuation
+ignored, Unicode lowercasing so Cyrillic case folds and Turkish dotted and
+dotless `i` fold together), with its segment and words, in
 dictation, meetings, and the local API alike; the same words elsewhere stay.
 A credit spoken mid-chunk and followed by more speech is kept. A dictation that
 genuinely ends with a listed phrase, such as the Turkish thanks, loses it: the
@@ -432,6 +468,9 @@ precomposed one is unchanged. The list is in
 Checks: `a_trailing_subtitle_credit_is_removed`,
 `a_turkish_thanks_for_watching_is_removed`,
 `a_truncated_turkish_credit_is_removed`,
+`a_russian_continues_credit_is_removed`,
+`a_russian_subtitle_credit_is_removed`,
+`russian_credits_later_in_the_speech_are_kept`,
 `the_same_words_mid_sentence_are_kept`,
 `a_combining_mark_inside_a_word_does_not_split_it`,
 `speech_without_a_trailing_credit_is_kept`, and
@@ -455,7 +494,7 @@ Settings picker > Every model row          // fixed height; scrolls
 ├── Name, role, blurb, then "No wait · 1 in 50 words wrong · 25 languages · 2.5 GB"
 ├── Saved language unsupported -> Warning line naming the language it switches to
 ├── Trailing edge -> In use dot; progress with Cancel; else Use/Download; Delete when downloaded
-├── Labs > Benchmark details (off) -> raw error rate "7.57% CER", a wrapping line:
+├── Labs > Model test details (off) -> raw error rate "7.57% CER", a wrapping line:
 │   language · dataset/split · source · conditions or "unknown" ·
 │   speed qualified; "Most accurate" only between comparable records (labs.md)
 ├── Labs > Parakeet Ultra (off) -> its row with a Labs tag and Details: languages,  // setup.parakeet-ultra
@@ -466,6 +505,13 @@ Settings picker > Every model row          // fixed height; scrolls
 │   "not measured in Hex"; never recommended or badged. Checks:
 │   `orukeet_is_offered_for_exactly_parakeet_v3s_languages_and_never_badged`,
 │   `orukeets_details_credit_its_base_and_cover_its_languages_once`
+├── Fluid Speech Pro -> ordinary row with Details: languages, the CC BY 4.0  // setup.fluid-speech-pro
+│   credit and notice, Source/License links, folded published benchmarks "not
+│   measured in Hex": the card's FLEURS figures for 24 of its 25 languages
+│   (greedy decoding, the reference NeMo model; no English figure); never
+│   recommended or badged. Checks:
+│   `fluid_speech_pro_is_offered_for_exactly_parakeet_v3s_languages_and_never_badged`,
+│   `fluid_speech_pros_details_credit_its_bases_and_cover_its_languages_once`
 ├── "Add model file…" in the header -> imported cards after the catalog:  // setup.custom-models
 │   Imported · family · languages · Not benchmarked · file · licence · SHA-256
 │   prefix; Rename, Remove (not the active
@@ -502,9 +548,10 @@ macOS (Metal), Windows, and Japanese, Korean, Chinese, or Vietnamese audio.
 Parakeet v3 remains available for Portuguese and its other existing language
 choices. Its card explains the limitation and suggests Whisper for
 language-guided transcription. It is also offered under Auto: it detects the
-language from the audio and takes no hint, as do Orukeet, Parakeet Ultra, and
-Granite Speech 5.0. A hint-taking model without `stt.capability.lang_detect`
-stays out of Auto. Multilingual audio support is not language conditioning:
+language from the audio and takes no hint, as do Orukeet, Fluid Speech Pro,
+Parakeet Ultra, and Granite Speech 5.0. A hint-taking model without
+`stt.capability.lang_detect` stays out of Auto. Multilingual audio support is
+not language conditioning:
 the pinned v3 GGUF has no `stt.parakeet.prompt.num_prompts` metadata, which gates
 language prompting in `transcribe-cpp-sys` 0.1.3.
 
@@ -541,6 +588,14 @@ recommendation, the `km` hint, that Whisper's picker offers it, and that
 Qwen3-ASR rejects it. It runs no inference, and Khmer accuracy has not been
 measured.
 
+Azerbaijani (`az`) is offered because Whisper large-v3-turbo was trained on it
+and no other available catalog model supports it, so Whisper is its only,
+recommended choice and a system whose first preferred language is Azerbaijani
+starts on Whisper. `azerbaijani_is_transcribed_by_whisper_with_its_language_hint`
+checks the recommendation, the `az` hint, that Whisper's picker offers it, and
+that Qwen3-ASR rejects it. It runs no inference, and Azerbaijani accuracy has
+not been measured.
+
 Checks start in [desktop/onboarding.rs](../../src/desktop/onboarding.rs),
 [transcription.rs](../../src/transcription.rs), and
 [transcription/models.rs](../../src/transcription/models.rs). Setup/picker previews
@@ -555,7 +610,11 @@ background download, practice outcomes, one-relaunch guard), fed by
 [rune_ui/onboarding.rs](../../src/rune_ui/onboarding.rs); what the person sees
 is the story in [rune_ui/onboarding_kit](../../src/rune_ui/onboarding_kit.rs),
 opened at launch by `Ui::new` and replayed by Run setup again. The guide
-beside System Settings is [permission_guide.m](../../native/permission_guide.m).
+beside System Settings is [permission_guide.m](../../native/permission_guide.m):
+it reads the Screen Recording grant from TCC, because the CoreGraphics
+preflight keeps the answer it read at launch, closes that guide once the
+watched read says granted or needs a restart, and stays out of the way while
+another app is in front of System Settings.
 On Windows the Microphone row shows only while the microphone switch in
 Settings › Privacy & security is off (device, user, or desktop apps;
 `CapabilityAccessManager\ConsentStore\microphone` says `Deny`); setup
@@ -655,6 +714,9 @@ interaction, installed-app switching, and Linux runtime behavior were not exerci
 ```ts
 Labs > Switch model with keyboard language      // setup.input-source-model; macOS, Windows, Linux X11; off by default; General shows the mappings while on
 ├── Each enabled keyboard input source -> Don't switch, or a downloaded model and language
+│   (alphabetical by name, Auto first)
+│   ├── Open the language menu -> It scrolls to the chosen language so its
+│   │   check is in view (`a_modes_language_menu_opens_on_its_chosen_language`)
 │   ├── New mapping -> The source's own language when the model has it
 │   ├── One-language model -> Its language shown fixed
 │   └── New/unmapped source -> Don't switch; keep the current model
@@ -719,80 +781,6 @@ reported `us`, then `ru` after an XKB group lock. The Windows observer and both
 new runtime paths compile (x64 clippy) but were not run on Windows or a live X11
 desktop.
 
-### Switch models with the app in front
-
-```ts
-Labs > Switch model with app                      // labs.app_model_switching; macOS, Windows; off by default; Modes shows each mode's choice while on
-├── Each mode, Global included -> Don't switch, or an installed model and a language
-│   ├── New choice -> The model's last-used language, else the saved language it supports
-│   ├── One-language model -> Its language shown fixed
-│   └── No choice -> Leave the selected model alone
-├── Matching -> By application on macOS and Windows alike; a mode's website rules are ignored
-├── Frontmost app changes -> The matching mode's speech choice
-│   ├── 300 ms after the last change -> Existing installed-only picker preparation
-│   ├── Same model and language already selected -> Nothing loads
-│   └── A model no longer downloaded -> Not installed; the preparation refuses it
-├── Hex's own window, or no app in front -> Ignored; keep the last mode and its pending switch
-├── Enable -> Wait for the next app other than Hex; launch records the app in front without switching
-├── Editing a mode's choice -> Applies when you next focus an app whose mode carries it, never while Hex is in front
-├── Manual model choice -> Supersede pending automatic work; do not reapply at recording start
-├── A dictation records or transcribes -> Hold a due switch until idle   // macOS from its press; Windows engine streams and finishes
-├── Both keyboard and app switching on -> Whichever switch is due later wins; the app wins a tie
-├── Disable -> Cancel automatic work; stop observing; leave the selected model alone
-└── Linux -> Not listed; no runtime follows the frontmost app for models
-```
-
-Each mode's choice persists as `speech` in `dictation_processing.modes[]`,
-and Global's in `dictation_processing.default_mode.speech`, storing a model
-with a language it supports. Only downloaded GGUF models from the picker are
-offered (Apple Speech never); downloads stay in the picker, and a switch never
-downloads. A choice whose model is no longer downloaded reads Not installed
-and is refused by preparation, which leaves the selected model alone.
-Editing a mode's choice, Global's included, applies when you next focus an
-app whose mode carries it; it never applies while Hex's own window is in
-front. Enabling the lab switches nothing by itself: the choice applies when
-you next focus an app other than Hex, after the same 300 ms debounce.
-
-The switch follows the same policy as keyboard-language switching
-([app_model_switching.rs](../../src/transcription/app_model_switching.rs)):
-a manual choice cancels a pending automatic switch, launching records the mode
-in front without applying it, and a due switch waits while a dictation
-records or transcribes (macOS knows a capture from its press; Windows sees the
-engine's streams and finishes). A mode without a choice switches nothing, and
-turning the lab off stops observing the frontmost app. Both hosts match by
-application only: macOS matches the foreground application through the same
-dictation profile selectors as mode processing, and Windows matches the
-foreground executable stem through `dictation::modes`; neither reads a
-browser page, so a mode's website rules are ignored and a mode chosen only by
-website never matches. Hex's own window, and a moment with no application in
-front, are ignored entirely: they neither schedule nor cancel a switch.
-Linux has no runtime for it, so the lab is not listed there.
-
-The switch is debounced for 300 ms after the app changes. With keyboard
-switching also on, both sources follow the same picker preparation: the one
-that becomes due later wins, and if both are due in the same tick the app
-switch wins.
-
-Sources: [switch policy](../../src/transcription/app_model_switching.rs),
-[macOS runtime](../../src/macos_rune/runtime.rs),
-[Windows host](../../src/windows/app.rs),
-[Modes pane](../../src/rune_ui/modes.rs), and the shared
-[row](../../src/rune_ui/speech_model.rs) it uses with General's input-source
-mappings. Checks:
-`app_model_switching_is_a_labs_toggle_on_macos_and_windows`,
-`a_mode_picks_an_installed_speech_model_and_language`, and
-`the_speech_row_needs_the_lab_and_a_capable_os` in
-[speech_model_tests.rs](../../src/rune_ui/speech_model_tests.rs); the policy
-tests in [app_model_switching.rs](../../src/transcription/app_model_switching.rs);
-the settings round-trip and validation tests in
-[app_settings.rs](../../src/app_settings.rs); and the selector tests in
-[dictation/config.rs](../../src/dictation/config.rs) and
-[dictation/modes.rs](../../src/dictation/modes.rs). No check delivers a
-foreground app change on a live Mac or Windows PC, and the runtime scheduling
-compiles there only; the `mac-labs` and `windows-labs` goldens were regenerated
-for the new card, the Modes goldens are unchanged with the lab off, and the new
-`modes-speech` golden shows the on state.
-
 ### Delete downloaded models
 
 ```ts
@@ -833,12 +821,13 @@ Saved shortcut                           // dictation; Option by default; Window
 │   -> Discarded: nothing pasted or saved; transcribing jobs finish (#1022)
 ├── Hold modes -> no cancel: Escape reaches the app, every dictation pastes (#786)
 └── macOS recorder: a key alone needs a modifier, except F1–F20 and Home, End,
-    Page Up, Page Down, Help (#1138; keys_without_modifiers_need_one_except_function_keys)
+    Page Up, Page Down, Help (#1138; keys_without_modifiers_need_one_except_function_keys),
+    and the microphone (dictation) key with Labs › Microphone key alone on (#181)
 
 General > Shortcut mode -> Hold or double-tap (default), Hold, Tap, Double-tap
   -> Modal: each choice with its keys and a looping key/recording timeline
   -> Double-tap needs a key binding; with a shortcut that has no key (one or
-     more modifiers) it says so, unless Labs > Double-tap on a lone modifier
+     more modifiers) it says so, unless Labs > Double-tap Option, Command, or Globe
      is on (macOS)
 
 Dictate without processing (Output pane; unbound)   // dictation.md
@@ -856,7 +845,7 @@ Labs > Second dictation shortcut (off)   // labs.md; issue 627
 
 Labs > More dictation shortcuts (macOS, off)   // labs.md
   -> General shows a numbered row per extra (recorder, shortcut mode, Remove) and Add shortcut under four
-  -> each row dictates like the shortcut in its own mode; Double-tap also takes a lone modifier while Labs > Double-tap on a lone modifier is on
+  -> each row dictates like the shortcut in its own mode; Double-tap also takes a lone modifier while Labs > Double-tap Option, Command, or Globe is on
   -> Escape cancels once it's locked, in Tap, or on a bare key or mouse button
   -> off, the saved rows stay and nothing matches; on, each needs its own keys
 
@@ -876,7 +865,7 @@ Labs > Caps Lock dictation (macOS, off)   // labs.md
      Lock capture; the normal shortcut stands down while one runs; off or
      quit clears the light and restores Caps Lock
 
-Labs > Unload model when idle (off; 5/15/30/60 min, default 15)   // labs.md; transcription/engine
+Labs > Free memory when idle (off; 5/15/30/60 min, default 15)   // labs.md; transcription/engine
   -> nothing used the model that long and nothing records -> the model unloads
   -> next press, meeting chunk, or API request -> reloads first; audio waits, nothing lost
 ```
@@ -891,8 +880,13 @@ Do not start it beside an existing listener.
 ```ts
 Completed output                         // output
 ├── Paste -> Current focus, in submission order
+│   ├── Back-to-back dictations with no key, click, or window change between
+│   │   -> joined with a space and sentence-aware capitalization (macOS, Windows;
+│   │      Linux on Wayland where the compositor reports input, dictation.md)
 │   ├── Previous clipboard restored 500 ms later, unless something newer replaced it
 │   ├── Windows -> the transcript is marked out of clipboard history (Win+V) and cloud sync (#851)
+│   ├── Windows -> a paste only goes to a window that can take it: the desktop
+│   │   and taskbars keep the words on the clipboard and report "copied" (dictation.md)
 │   ├── Labs > Keep dictation on clipboard (every OS, off) -> the dictation stays on the clipboard (labs.md)
 │   │   └── Windows -> kept as an ordinary entry, in history too
 │   └── Labs > Copy dictation only (macOS, Windows, off) -> clipboard only: no paste, typing, or restore (labs.md)
@@ -908,16 +902,24 @@ Completed output                         // output
     ├── Retention ("Kept 7 days ▾" menu) -> Seven days by default, always hard-capped
     ├── Off ("History off") -> Stop new entries; preserve existing entries
     ├── Same menu > Clear all history… -> asks in the header; only the red confirm clears
-    ├── Labs > Select multiple dictations (off, every OS) -> one row as before   // labs.history_multi_select
+    ├── Select dictations (every OS, no setup)   // history.selection
     │   ├── Plain click, Shift-click on the visible (searched) rows, Cmd-click (Ctrl), or a drag -> one, a range, or a toggled set
+    │   ├── Adjacent selected rows share one highlight; an unselected search result separates two highlights
     │   ├── Two or more selected -> "{count} dictations selected": Copy (final texts, oldest first, a blank line between each) / Delete… (asks once)
     │   ├── One selected -> the ordinary card, Copy, Delete… (asks once, then Cancel), Transcribe again with Keep recordings
-    │   └── A search, new entries, or a delete prune it; turning the lab off keeps one entry (labs.md)
-    └── Labs > Keep recordings (off) -> new entries keep their 16 kHz audio   // labs.keep-recordings
-        -> also "Keep audio too" in the retention menu while the lab is offered
-        -> the card's "Transcribe again" menu runs it through any installed model
-        -> the new text with Copy and Replace; Clear all and retention delete the audio (labs.md, #1032)
-        -> Replace keeps the old text as one of 5 earlier versions: Copy, Use this version (#1177)
+    │   └── A search, new entries, or a delete prune the selection
+    ├── Labs > Keep recordings (off) -> new entries keep their 16 kHz audio   // labs.keep-recordings
+    │   -> also "Keep audio too" in the retention menu while the lab is offered
+    │   -> the card's "Transcribe again" menu runs it through any installed model
+    │   -> the new text with Copy and Replace; Clear all and retention delete the audio (labs.md, #1032)
+    │   -> Replace keeps the old text as one of 5 earlier versions: Copy, Use this version (#1177)
+    ├── Labs > Copy dictation audio (off) -> copies a kept WAV as a file   // labs.copy-dictation-audio
+    │   -> the card's Copy audio beside Play, and the menu bar or tray's Copy last dictation audio
+    │   -> needs Keep recordings; it stores no audio itself (labs.md)
+    └── Labs > Dictation stats (off) -> History's Stats dialog and hex history stats   // labs.history-stats
+        -> headline tiles, time saved with a typing-speed slider, the busiest hour, a 30-day chart, top apps
+        -> a 53-week heatmap and all-time totals, from a daily rollup in usage.json with no text or app names
+        -> Clear all history deletes the rollup too (labs.md)
 Every entry since #1177 -> "Speech model" fact: the model that made its text (+ language when chosen)
 ```
 
@@ -960,15 +962,37 @@ An optimized isolated harness using the production reader and a synthetic
 254 ms before and 222 ms after. This is reader evidence, not a native Settings
 latency measurement.
 
+## Find a setting or lab
+
+```ts
+Focused Hex window → ⌘K (Ctrl+K off macOS; ⌘F / Ctrl+F also works on General)
+├── Type a title, description or breadcrumb → one list of settings and Labs cards
+├── ↑ / ↓, then Return, or click → reveal and focus the control; no value changes
+│   ├── General › Advanced → unfold in this window only
+│   └── Labs → show the destination’s group and outline its card, without opting in
+└── Escape or press outside → close and restore focus
+```
+
+The [destination list](../../src/rune_ui/find_popover/catalog.rs) covers the
+ordinary General controls (including shortcut bindings, microphone, speech
+model and language, sound, HUD and application preferences), Output’s raw
+dictation shortcut, and every available unlocked Labs card, including Annotate.
+It does not index values, history, transcripts, files, commands, model choices,
+per-device mappings, per-app rules, inline lab controls, diagnostic or
+permission notices, or the contents of other panes. A focused editor, shortcut
+recorder, onboarding or another modal keeps its keys. Labs keeps its own ⌘F.
+
 ## Adjust Behavior
 
 ```ts
 Sidebar                                  // settings.nav
-├── General, Output, History, then each feature that is on: Captures
-│   (Labs › Screenshots, macOS), Meetings and Voice Filter (Labs toggles),
-│   Annotate, Playground (Labs, an item)
-└── Labs -> a store of unfinished features, each off by default: search, categories, cards with their own settings inline; hex://labs/<feature> opens its group and scrolls to its card (labs.md)
-    // Command-1…9 follow the panes' order (labs::order)
+├── General, Output, Modes (Labs › Modes editor, while on), History, then each
+│   feature that is on: Captures (Labs › Screenshots, macOS), Meetings and
+│   Voice Filter (Labs toggles), Annotate, Playground (Labs, an item)
+├── Labs -> a store of unfinished features, each off by default: search, categories, cards with their own settings inline; hex://labs/<feature> opens its group and scrolls to its card (labs.md)
+└── What’s new -> recent features and their controls; Down from Labs selects it
+    // Version, update actions, and Quit (Linux and Windows) are outside the navigation list
+    // Command-1…9 follow the main panes' order (labs::order)
 
 General                                  // settings
 ├── Basics card -> Shortcut, Speech model, Language, Microphone, Launch at login
@@ -1019,8 +1043,9 @@ General                                  // settings
 │   │   microphone instead of Bluetooth")
 │   ├── Output -> Paste last shortcut, While dictating, Dictation HUD, Terminal paste (Linux)
 │   │   (Dictate without processing sits in the Output pane; see dictation.md)
-│   └── Application -> Enable on launch, Show Dock icon, Sound volume, Sounds,
-│       Interface language, Update channel (self-updating installs)
+│   └── Application -> Enable on launch, Show Dock icon, Sounds,
+│       Interface language (System first, then alphabetical by displayed name),
+│       Update channel (self-updating installs)
 │       // Interface language System: macOS's first preferred language (zh-Hans -> 简体中文,
 │       // zh-Hant, zh-TW, zh-HK, zh-MO -> 繁體中文), Linux LC_ALL/LC_MESSAGES/LANG
 │       // (zh_TW.UTF-8 -> 繁體中文), Windows the user locale; unknown -> English
@@ -1042,6 +1067,12 @@ General                                  // settings
 │   ├── One switch, no confirmation; its line says what the state means (issue 61), on every OS
 │   ├── Off (default) -> "The mic stays ready so dictation starts instantly; your system shows it in use"
 │   │   Open while idle; pre-roll available
+│   │   └── macOS: released while the display sleeps, the session is locked, or the Mac
+│   │       sleeps, and back on wake or unlock   // dictate.warm-away
+│   │       ├── Launch reads the current display and lock state, so it starts released
+│   │       ├── Ignores Labs › Keep mic open after dictating's window (up to 30 min)
+│   │       └── Turning the setting off reopens it with a plain open; a press
+│   │           during that reopen becomes a pending capture
 │   └── On -> "The mic opens only while you dictate; the first moment can be clipped"
 │       Open on press; no pre-roll; startup delay
 ├── While dictating -> Mute / Pause media / Lower audio / Do nothing
@@ -1064,10 +1095,10 @@ General                                  // settings
 │       ├── Turning it on without System Audio Recording -> ask now, never while dictating
 │       ├── On -> Screen & System Audio Recording row: Allow / waiting / Allowed
 │       └── Dictation -> browser_media sequence below
-├── Sound volume -> slider 0-100%; release saves and previews the start sound; zero suppresses tones
-│   └── A saved zero displays Off; enabling sounds through the CLI restores the default level
+├── Sounds -> one row ("Classic · 50%" or Off) opening a sheet: Sound volume slider in 5% steps, then each set to hear and pick
+│   ├── Slider release saves and previews start unless Off; only the sheet's previews play while Off
+│   ├── A saved zero displays Off; enabling sounds through the CLI restores the default level
 │   └── Default output changes or disappears (macOS) -> next tone reopens on the current default
-├── Sounds -> Sheet: hear each set on Hex's real HUD, pick one
 └── Linux / Windows -> listener card and desktop commands below the basics
 
 Pause media + Also pause the browser     // browser_media
@@ -1138,8 +1169,11 @@ preserving balance and silent channels, then restore on finish, cancel, or
 orderly shutdown by easing back over one second. Changes apply to the next
 capture. The stop tone waits for restoration. A manually changed volume after
 settling is left alone;
-a newly selected output device is not lowered. Fixed-volume devices and outputs
-whose channel balance cannot be safely restored are left unchanged. Meetings do
+a newly selected output device is not lowered. On macOS, a channel with no
+volume control is left at its level, and a channel that can be read but not set
+sends lowering to the virtual main volume so the balance stays intact; an
+output with no controllable volume at all is left unchanged and logs a
+warning. Meetings do
 not acquire this dictation environment. Linux lowers the default sink's
 channels through `pactl` (one volume through `wpctl` without it), so Hex's own
 tones are lowered too and the stop tone waits, as on macOS. Windows lowers
@@ -1170,6 +1204,25 @@ restored. Checks: `ducking_preserves_balance_silence_and_restores` and
 that module, and `suppressing_audio_while_dictating_keeps_no_pre_roll` in
 [dictation.rs](../../src/dictation.rs) (constructed audio; not run on a device
 or physical output).
+
+**Changed November 16, 2026 (issue 1915):** on macOS, Lower audio needed every
+one of the output's stream channels to carry a settable volume scalar, so a USB
+adapter reporting two buffers of two channels where only the first pair has one
+was left unchanged, silently; Mute worked there because it uses the virtual main
+volume. Lower audio now ramps the channels that can be read and set and leaves
+channels without a volume control at their level, then falls back to the main
+volume and then to the virtual main volume Mute uses when no channel reports a
+volume at all. A channel that can be read but not set rules out both the
+per-channel ramp and the plain main volume, since either could leave it
+lopsided or flatten a balance that cannot be restored: the virtual main volume,
+which macOS keeps balanced, is the only choice then. Restore writes the same
+control it lowered, at the value it read. An output with no controllable volume
+at all now logs a warning instead of doing nothing quietly. Checks:
+`channels_without_a_volume_scalar_are_skipped_not_fatal`,
+`a_read_only_channel_leaves_the_balance_to_the_virtual_main_volume`, and
+`the_main_then_the_virtual_main_volume_are_the_fallbacks` in
+[ducking.rs](../../src/audio/recording_environment/ducking.rs) (selection only;
+not run on a device).
 
 On 2026-10-25, the macOS logic/settings checks and strict Clippy passed.
 The seven reference images were regenerated on Ubuntu 24.04 ARM64 with Mesa
@@ -1224,8 +1277,8 @@ what is playing, so Hex hears the browsers through a private process tap
 (aggregate `anomaly.hex.browser-tap.<pid>`, apart from the meeting tap) and sends
 play only after it saw the browser go silent right after its own pause. The
 browsers are the ones [microphone_activity.rs](../../src/microphone_activity.rs)
-knows: Chrome, Brave, Safari, Firefox, Edge, Arc, Vivaldi, and Helium, whose
-helpers count as their browser. The sequence checks in
+knows: Chrome, Brave, Safari, Firefox, Edge, Arc, Vivaldi, Helium, Ardia, and
+Zen, whose helpers count as their browser. The sequence checks in
 [audio/browser_media.rs](../../src/audio/browser_media.rs) run on fakes:
 `a_confirmed_pause_is_resumed`, `two_sounding_tabs_never_get_play`,
 `a_browser_already_playing_gets_no_play`, `a_call_is_never_paused`,
@@ -1323,7 +1376,9 @@ Output (main sidebar, replaces the Modes editor) // rune_ui/output.rs; scenes ou
 │   unbound by default: copies the focused field, runs its Output steps, re-checks the
 │   selection, and replaces it (labs.md, dictation.md)
 └── In some apps -> Each mode's apps and its steps (Only: …), opens to list them
-    // the old Modes editor stays in the code for its scenes, unreachable
+    // Labs > Modes editor (off) shows the old Modes editor as its own sidebar pane,
+    // right after Output, with editable apps, corrections, rewriting, and
+    // transformations; the Modes destination opens it instead of Output (labs.md)
     // Its drafts and delete confirmation follow the unique saved mode name
     // across reloads; removing, renaming or duplicating it drops the draft.
     // A dirty field stays; untouched fields adopt the new values individually.
@@ -1338,19 +1393,21 @@ Selected mode                            // replaces Global's rewrite and transf
   -> Its vocabulary, then the shared one   // features/vocabulary.md (vocabulary.modes)
   -> Speech Labs preparation              // formatting, symbols, English filler removal
   -> Global's corrections, then the mode's  // every OS
-  -> Labs > Voice prompt's phrase          // Labs off, or no phrase, processes as before
+  -> Labs > Neutral voice, in a mode that opts in  // macOS; replaces the rewrite and cleanup; transformations still run
+  -> Labs > Rewrite by voice's phrase          // Labs off, or no phrase, processes as before
      -> one spoken instruction replaces the rewrite, with the mode's model and deadline (labs.md)
-  -> OpenCode transformation             // optional provider-backed rewrite
+  -> OpenCode transformation             // optional provider-backed rewrite; an unset model is Hex's ranked pick, shown Automatic
+  -> Dictation style                     // Labs › Dictation style on: Polished, Casual, Notes, or Verbatim, after the rewrite and before transformations (labs.md)
   -> Transformations                     // ordered text chain
   -> Paste or Send
 
 Stage fails -> Preserve its input        // failed chain discards partial results
 ```
 
-With Labs › Switch model with app on, each mode also carries a speech model
-and language (`speech`) and the frontmost app's mode switches the
-transcription model before the next dictation; see
-[Switch models with the app in front](#switch-models-with-the-app-in-front).
+Each mode may also carry a speech model and language (`speech`) from the saved
+per-app model opt-in, which has no Settings editor; when it is on (macOS and
+Windows), the frontmost app's mode switches the transcription model before the
+next dictation ([`transcription/app_model_switching`](../../src/transcription/app_model_switching.rs)).
 
 **Fixed November 1, 2026 (issue 949):** every OpenCode rewrite's fixed
 instructions (`PROTOCOL_PROMPT`) now say to keep every number as said (no
@@ -1455,7 +1512,9 @@ script transformation (it receives the address)
 (`dictation::config::reads_browser` on macOS, `ModeRuntime::reads_page` on
 Windows and Linux; a dictation without processing never reads it). On macOS,
 dictation's page reads then never prompt (Meetings and media pause still ask
-browsers when on). Windows starts no UI Automation walk of the browser, and
+browsers when on). Windows starts no UI Automation walk of the browser for a
+dictation without processing (meeting detection reads a microphone-holding
+browser's windows itself, see [Meetings](meetings.md)), and
 Linux asks AT-SPI only for the process of a window the display server names no
 other way. Check: `the_page_is_read_only_when_processing_uses_it` in
 [dictation/modes.rs](../../src/dictation/modes.rs); not run against a live
@@ -1501,10 +1560,11 @@ OpenCode transformation talks only to an already running OpenCode service,
 found through its registration file ([desktop/opencode_service.rs](../../src/desktop/opencode_service.rs));
 Hex runs no OpenCode executable and starts nothing. On Windows, Labs › OpenCode
 in WSL adds the default WSL distribution's registration and a Linux
-`x-opencode-directory` workspace when no Windows registration answers; off,
-only the Windows registration is read. The catalog loads only while
-the Modes pane shows. Without a service, "OpenCode isn't running" shows beside
-the switch and the setup/retry notice below;
+`x-opencode-directory` workspace; with the lab on, a WSL service that answers
+is used ahead of a Windows one, and the Windows service is the fallback when
+WSL answers nothing. Off, only the Windows registration is read. The catalog
+loads only while the Modes pane shows. Without a service, "OpenCode isn't
+running" shows beside the switch and the setup/retry notice below;
 `unavailable_opencode_is_explained_beside_each_switch` covers it headlessly, and
 the `desktop/opencode_service` tests cover registration, stale-PID, loopback, chunked,
 deadline, and cancellation handling against a local fixture, not a live
@@ -1529,6 +1589,20 @@ rewrites already persisted activations on load, checked by
 `application_matching_ignores_finder_bundle_extensions` and
 `loading_strips_finder_bundle_extensions_from_mode_applications`.
 
+The picker saves the name Finder shows for the bundle's file, which can differ
+from the name the running app reports (`Rex Beta.app` runs as `Rex`,
+`Visual Studio Code.app` as `Code`). The macOS frontmost read also keeps
+Finder's name for the frontmost bundle (`ContextSnapshot::bundle_name`, set
+only when it differs), and `application_is` accepts either, so Modes,
+Labs › YOLO mode, and the per-app model opt-in match an app under both
+names. Checked by
+`an_application_selector_matches_the_bundles_finder_name_too` (context.rs),
+`a_picked_app_sends_under_its_finder_name_or_its_own` (yolo_mode.rs), and
+`a_mode_picked_under_its_finder_name_switches` (app_model_switching.rs).
+**Fixed on dev, Nov 19 2026:** before, a picked app whose file name differs
+from its own name never activated its Mode, YOLO mode never sent in it, and
+the per-app model opt-in never switched to its mode's model.
+
 **Fixed in 2.1.14:** through 2.1.13, a mode saved with that Finder
 preference enabled never activates and every dictation falls back to Global.
 Update to repair saved selections automatically. For older builds, the workaround
@@ -1548,7 +1622,13 @@ suppression, and the Markdown copy in the user's transcript folder.
 Labs › Voice Filter (experimental.hex_microphone = true), HEX_EXPERIMENTAL_MIC=1,
 or the driver installed; off, the pane is hidden  // fun.hex-microphone; macOS, Linux
 ├── Sidebar > Voice Filter  // the only home of these controls
-├── Hex Microphone card
+├── What callers hear: the effect applies only while dictating; normal speech otherwise
+│   ├── Select a name → apply it live: Muffled (default), Muted, Quiet, Normal, Chipmunk, Robot, Walkie, Underwater, Far
+│   ├── Play on a tile → preview that effect, never save it or change the virtual input
+│   │   ├── Example clip or an explicit 5 s recording (in memory only); Play original to compare
+│   │   └── Two waveforms highlight the dictation span. Switching previews stops the previous one
+│   └── Adjust effect → per-mode sliders, effect strength, Reset, and comfort noise for Muted
+├── Hex Microphone setup
 │   ├── Linux -> no driver: a PipeWire virtual source (Audio/Source "Hex Microphone",
 │   │   node hex_microphone) that Hex plays into through `pw-cat` while the Voice Filter is on
 │   │   ├── Status -> Starting… / Available ("Choose Hex Microphone as your input…") / Unavailable + reason
@@ -1557,18 +1637,16 @@ or the driver installed; off, the pane is hidden  // fun.hex-microphone; macOS, 
 │   │   │   1.2 and older reject it and already play raw on -
 │   │   ├── Off or Hex quits -> the source disappears (pw-cat ends with its input); no root, nothing installed
 │   │   └── Session priority 1 -> WirePlumber never picks it as the default input Hex records
-│   ├── macOS driver status -> Installed v<ver> / In use by <app> + Uninstall
-│   │   ├── Version mismatch -> v<old> installed + Update + Uninstall
+│   ├── macOS -> select Hex Microphone as the input in the call app / In use (by name only when observed on that input) + Uninstall
+│   │   ├── Version mismatch -> Update + Uninstall
 │   │   ├── Pre-Anomaly com.kitlangton driver at the same path -> Update replaces it in place
 │   │   ├── Not installed -> Install -> macOS admin prompt -> copies bundled HexMicrophone.driver + restarts coreaudiod
 │   │   └── Inline state -> Installing… / Uninstalling… / Cancelled / Failed with reason
-│   ├── Mode while dictating -> Muffled (default), Muted, Quiet, Normal, Chipmunk, Robot, Walkie, Underwater, Far
-│   ├── Key sliders -> Live mode tuning + Effect strength + Reset
-│   └── Try it -> Example clip OR Record 5s (in-memory only)
-│       ├── Dual waveform -> You vs Call hears with highlighted dictation span
-│       └── Explicit playback -> Play what call hears | Play your voice
 ├── Live microphone capture -> Raw audio to Hex transcription (unmodified)
 │   ├── Source -> Hex's dictation microphone (System default follows the OS default, never Hex Microphone itself), never a meeting's second stream
+│   │   └── macOS: with Release when idle off, locking the screen or sleeping the
+│   │       display releases that microphone, so Hex Microphone pauses until wake or unlock
+│   │       (dictate.warm-away)
 │   ├── Lock-free ring -> 48 kHz virtual sink (macOS IOProc; Linux 11 ms blocks into a one-page pipe) -> Raised-cosine fade on intentional hold
 │   │   └── Not dictating -> bit-exact pass-through; non-48 kHz inputs resample continuously
 │   └── Ring underflows/overflows -> process.log each minute while an app reads it, and on sink stop
@@ -1593,7 +1671,10 @@ and [rune_ui/fun.rs](../../src/rune_ui/fun.rs). Checks:
 `osascript_failure_classifies_user_cancel_and_errors`,
 `audio_service_restart_interrupts_stream_and_recovers`,
 `voice_filter_saves_the_mode_and_applies_the_tuning_live`,
-`try_it_records_and_plays_through_the_host`, and
+`try_it_records_and_plays_through_the_host`,
+`preview_each_effect_before_install_without_applying_it`,
+`voice_filter_setup_distinguishes_an_available_input_from_a_call`,
+`rapid_auditions_replace_pending_audio_and_invalidate_work_in_flight`, and
 `voice_filter_needs_labs_or_hex_microphone`.
 Scenes: `mac-voice-filter`, `mac-voice-filter-muted`,
 `mac-voice-filter-driver-missing`, `voice-filter`, `voice-filter-unavailable`
@@ -1791,21 +1872,31 @@ Hex checks the release service            // maintain.updates
 ├── Direct install -> download (resumable) -> size + SHA-256 -> code signature -> stage
 │   ├── macOS -> unpack beside Hex.app -> Developer ID 5NZ4Q7NXJ4, anomaly.hex, notarized
 │   ├── Windows -> Authenticode valid, signer AUTHENTICODE_SIGNER -> new version directory
+│   │   └── .lnk files in Start Menu, Desktop, and taskbar pins -> retargeted in one PowerShell run
+│   │       // target is versions\<version>\hex.exe; arguments and name stay, an old-version icon is repointed
+│   │       // a Start Menu Hex.lnk that reads as empty (zero-filled) is recreated, but never when it is gone
+│   │       // saves flush updates\shortcut.tmp.lnk; a failed replace saves the retarget in place, the repair copies
 │   ├── Linux -> SHA-256 only -> new version directory, `current` switched
 │   ├── Staged -> checks continue; Restart to update stays offered meanwhile
 │   │   ├── Another release this install takes (update, required) -> download -> replaces the staged one
+│   │   │   └── macOS -> its unpacked .Hex-update-<version> folder goes with it
 │   │   └── Same release, rollout deferred, unconfirmed switch, rollback, failure -> keep the staged one
 │   └── Sidebar Update, menu bar / tray: Restart to update; a dev build lists its
 │       first changes and What's new (https://anoma.ly/hex/dev) under it (updater/notes.rs)
+│       ├── A meeting is recording -> refused with that reason; the update stays
+│       │   staged and Ready, so the next click after it ends restarts. The macOS
+│       │   status item dims Restart to update while it would be refused
 │       ├── One more check first (manifest within 15 s) -> Checking / Downloading -> newest staged
 │       │   └── A release published after the relaunch -> the next launch's check
 │       ├── macOS -> renamex_np swap (also at quit) -> relaunch -> old bundle removed at launch
+│       │   // one .Hex-update-<version> folder at a time: staging a newer build removes the one it replaces
 │       └── Labs › Release notes link -> a release build's footer carries this build's notes:
 │           anoma.ly/hex/dev#<version> for a dev build, github.com/anomalyco/hex/releases/tag/v<version> for a stable one;
 │           local and test builds show no link (by build kind, not version string)
 ├── macOS location not replaceable (read-only, translocated, root-owned) -> Download update (DMG)
 ├── Package manager (pacman, Nix) -> its command, once it serves another version
 ├── Source build, test build -> never checks
+├── `HEX_X86_BASELINE=ivybridge` source build (2012 floor) -> source build: never checks; official artifacts target x86-64-v3
 └── Failure -> keep the running version, back off, Check for updates retries
 
 Check for updates pressed (footer, menu bar, app menu)   // maintain.update-feedback (#1120)
@@ -1829,6 +1920,24 @@ relaunch. Speech-model downloads are unaffected. Releases through 2.3.1 read
 `com.kitlangton.hex2`; there is no fallback to it, so profiles must name
 `anomaly.hex`.
 
+Every quit Hex starts ends through its own drain: Rune is told the app has work
+after its loop (`rune::orderly_exit`, called by `macos_rune::run`,
+`windows::rune::open`, and `rune_ui::run_app`), so Quit Hex, `hex quit`, and
+Restart to update stop and join the meeting controller. The staged bundle is
+installed before that join (the swap is atomic and touches no meeting files),
+and a quit that begins during Restart to update's final check never swaps a
+second time. On macOS the AppKit terminate notification drains the same way,
+with 5 s before `_exit` (`DEADLINE`), extended up to 30 s from the quit's
+start while a recording or recovery is in flight (`MEETING_DEADLINE`), plus up
+to 5 s more after it ends (still within the 30 s bound) for the rest of the
+drain, so a finalising meeting is never cut off. Linux's service stop has its
+own 20 s bound (`STOP_DEADLINE`) under the unit's 30 s `TimeoutStopSec`;
+Windows marks quitting and arms 20 s around its post-loop teardown, extended to
+30 s while meeting audio is in flight and polled rather than read once
+(`arm_windows_deadline`), exiting 1 when the window failed. Restart to update
+refuses while meeting audio is in flight (`updater::restart_hold`), re-checks
+after its final manifest check, and keeps the release staged.
+
 [updater.rs](../../src/updater.rs) owns the worker and the shared status the
 window, menu bar, and tray show; `updater/protocol.rs` passes the release
 service's shared test vectors (`tests/fixtures/release-protocol`), and the
@@ -1840,7 +1949,15 @@ waiting for confirmation, only a different self-taken release replacing a staged
 update (`only_a_different_release_this_install_takes_replaces_a_staged_update`),
 Restart to update's final check and one-time report
 (`restart_to_update_checks_once_more_and_reports_once`), Linux re-staging keeping
-the running version (`replacing_a_staged_update_keeps_the_running_version`), and
+the running version (`replacing_a_staged_update_keeps_the_running_version`),
+macOS keeping one unpacked folder however many builds it stages
+(`a_newer_staged_release_removes_the_folder_of_the_one_it_replaces`,
+`launch_cleanup_removes_every_unpacked_update_but_the_running_bundle`,
+`the_folder_to_keep_is_recognized_through_a_non_canonical_spelling`), the quit
+race (a release staged after a quit installed one is dropped:
+`a_release_that_finishes_staging_after_a_quit_installed_one_is_discarded`, the
+decision only; a restart never swaps twice after that:
+`a_restart_after_a_quit_installed_the_update_does_not_swap_again`), and
 Windows Authenticode (a Microsoft-signed system file). No test drives the worker
 through a real re-stage and restart; a channel rolled back while an update is
 staged still restarts into the staged release. The
@@ -1852,6 +1969,26 @@ a real install, a real update on any OS from the release service, the macOS
 swap and relaunch of a Developer ID build, a Windows update of a signed build.
 Manifests are unsigned; on Linux a compromised HTTPS origin could serve any
 executable with a matching manifest, which Linux code signing cannot catch.
+
+**Fixed after 0.0.0-dev-1046 (Dev channel):** through that build, every staged
+release unpacked its own `.Hex-update-<version>` folder beside `Hex.app`
+(`stage` in [macos.rs](../../src/updater/macos.rs)) and the only removal was
+`finish_on_launch`, so a Hex that ran for days while the Dev channel (a check
+every ten minutes) published builds left one ~80 MB copy of the app per build in
+`/Applications`. Staging a newer release now removes the folder of the one it
+replaces once the replacement is the staged update, and a release whose download
+finishes after a quit installed an update is dropped instead of replacing it
+(that folder holds the bundle the installed update replaced), so a restart never
+swaps twice. A quit that has not installed one keeps the older staged update
+Ready, so the quit still installs it. The launch sweep still takes whatever a
+swap or an interrupted stage left behind. Observed on macOS 26
+with the published 0.0.0-dev-1046 build: the launch sweep removed a folder
+holding an older signed build and one holding a swapped-in peer beside
+`/Applications/Hex.app`, and a folder owned by another user stayed with
+`could not remove an earlier Hex update … Permission denied (os error 13)`,
+which this does not repair. No test drives a live quit through the race: the
+guard is a decision test plus a restart-state test. Neither the staging sweep nor
+the swap was exercised against a real release service on a real install.
 
 **Fixed in 2.1.13:** older releases through 2.1.12 used app-global dispatch from
 inside the sidebar click, losing the action while the active window was borrowed.
@@ -1925,8 +2062,11 @@ Linux beta                               // not macOS feature parity
 │   │   (kernel + Vulkan driver libraries), then another GPU, then the CPU;
 │   │   the row says which GPU stopped responding
 │   ├── A GPU load, prewarm or run that fails with a device error (hang,
-│   │   reset, lost device, out of memory) -> reloads on the CPU; once the CPU
-│   │   works, that GPU is recorded
+│   │   reset, lost device) -> reloads on the CPU; once the CPU works, that
+│   │   GPU is recorded
+│   ├── A run that fails out of memory (status 7) -> reloads on the CPU and is
+│   │   not recorded (another copy can fill the GPU, #1165); the dictation
+│   │   model says so in the row until a GPU load works or Hex restarts (#1984)
 │   ├── An integrated GPU whose warm 1.5 s run takes over 300 ms -> Auto times
 │   │   the CPU too and keeps the faster; a slower GPU is recorded (slow), so
 │   │   later loads go straight to the CPU (#484: UHD 620, Iris Plus 655)
@@ -2042,7 +2182,7 @@ Linux beta                               // not macOS feature parity
 │       │   // centre, animating, focus unchanged, the pointer over it hits the
 │       │   // window below; not yet on a real GNOME Shell session
 │       │   ├── Meeting capsules take clicks, so they open there only with Labs ›
-│       │   │   Floating meeting capsules on GNOME on and Xwayland already running
+│       │   │   Call recording controls on GNOME on and Xwayland already running
 │       │   │   (meetings.md, labs.md; #1274)
 │       │   ├── Annotate's capsule and ink take clicks too, so they open there only
 │       │   │   with Labs › Annotate on GNOME and Xwayland already running; the ink
@@ -2132,7 +2272,14 @@ Linux beta                               // not macOS feature parity
 │       │       binds read Ctrl(+Shift)+V, not Ctrl(+Shift)+Escape (#444)
 │       ├── Otherwise -> RemoteDesktop portal: keyboard-only session, approved once
 │       │   (onboarding or Settings can ask first, `setup.paste-access`)
-│       │   (restore token, persist_mode 2) -> Ctrl+V as keysyms
+│       │   (restore token, persist_mode 2) -> keymap-resolved evdev keycodes
+│       │   // wl_seat keymap: a letter needs one code across every group that
+│       │   // has it (Dvorak v = KEY_DOT, AZERTY a = KEY_Q), while
+│       │   // Ctrl/Shift/Enter must be on 29/42/28 in every group; a letter
+│       │   // no group has still goes out on its pc105 key (a lone ru: KEY_V),
+│       │   // since the keysym path searches only the active group; else the
+│       │   // whole chord as keysyms; KWin 6.8's fake input and Mutter lose a
+│       │   // keysym outside the active group
 │       │   ├── 15 s after the last paste -> session closes when its grant restores, so
 │       │   │   GNOME's remote-control indicator shows only around pastes (#718); a grant
 │       │   │   that can't restore keeps its session
@@ -2193,12 +2340,20 @@ reads only. The owner-change guards are not covered by any test: X11 compares
 the selection's owner window, so the same window replacing its contents mid-read
 is not seen, and Wayland compares the selection offer after one roundtrip.
 The Wayland paste choice lives in [linux/paste.rs](../../src/linux/paste.rs) and
-[linux/remote_desktop.rs](../../src/linux/remote_desktop.rs). Observed: the
-wtype path in the headless-Sway smoke and the virtual-keyboard probe on niri
-(apollo). niri's portal frontend advertises RemoteDesktop but its GNOME
-backend fails CreateSession, so wtype stays first there. The RemoteDesktop
-paste itself (KWin, Mutter) has unit tests for its key sequence only and is not
-yet observed on a real desktop. The modifier wait (`ShortcutKeys` in
+[linux/remote_desktop.rs](../../src/linux/remote_desktop.rs), whose
+[keymap.rs](../../src/linux/remote_desktop/keymap.rs) reads the desktop's
+keymap. Observed: the wtype path in the headless-Sway smoke and the
+virtual-keyboard probe on niri (apollo). niri's portal frontend advertises
+RemoteDesktop but its GNOME backend fails CreateSession, so wtype stays first
+there. The RemoteDesktop paste itself (KWin, Mutter) has unit tests for its key
+sequences and its keymap resolution only and is not yet observed on a real
+desktop: it sends evdev keycodes where the keymap confirms each letter and
+Ctrl, Shift, and Enter (`ctrl:swapcaps` and the like fall back to keysyms), and
+sends a letter no group has on its pc105 key, rather than keysyms, which fixes
+KWin 6.8's fake input, where a Latin `v` under a Russian layout arrived as a
+bare `v` with Ctrl stuck down (#1939), and Mutter, which drops a keysym outside
+the active group. Neither fix is observed on a real KDE or GNOME session
+either. The modifier wait (`ShortcutKeys` in
 [linux/input.rs](../../src/linux/input.rs)) has unit tests for its timing only;
 it is not yet observed on Hyprland, and a modifier held past the wait still
 changes the paste. wtype numbers its keymap from evdev code 1 in order of first
@@ -2229,7 +2384,7 @@ Windows beta                             // x64 (Vulkan GPU) and ARM64 (CPU)
 │   │   while hidden, and make both at each show (Rune release_gpu_when_hidden);
 │   │   the HUD gives its surface back at each hide too (release_gpu_after, a
 │   │   zero idle on Windows; Linux keeps it 5 minutes), then the device goes
-│   │   ├── Dictation shortcut's modifiers down (Ctrl of Ctrl+Space) -> Rune
+│   │   ├── Dictation shortcut's modifiers down (the left Alt) -> Rune
 │   │   │   makes the device and the HUD's pipeline on a thread (warm_gpu_with,
 │   │   │   unclaimed for 30 s they go), so the HUD shows without them; this
 │   │   │   first call also makes the DX12-or-Vulkan choice
@@ -2251,21 +2406,35 @@ Windows beta                             // x64 (Vulkan GPU) and ARM64 (CPU)
 ├── Transcription GPU -> ggml's Vulkan, discrete before integrated, CPU last;
 │   a failed GPU load retries on the CPU; the GPU record and Settings ›
 │   Speech engine work as on Linux (#856)
-│   └── A launch that crashed starting the GPU (gpu-start.pending left in the
-│       data folder, same version) -> CPU only, warned in process.log, until
-│       Hex updates or the file is deleted (#662; not run on Windows)
+│   ├── A run that fails out of memory -> CPU for this process, said in
+│   │   Speech engine until Hex restarts (#1984; not run on Windows)
+│   ├── A launch that crashed starting the GPU (gpu-start.pending, a version
+│   │   and crashed attempts) -> the next launch retries once; a second crash
+│   │   keeps the CPU, warned in process.log, and Settings › Speech engine
+│   │   says "Choose Auto or GPU", which clears the marker and turns the GPU
+│   │   on at restart; an update deletes a marker from another build
+│   │   (#662; not run on Windows)
+│   └── hex status -> Speech names the loaded device ("Vulkan — …"), or "CPU
+│       (GPU start crashed twice)" after the marker forced the CPU
 ├── Hex app -> General, tray, HUD; Enabled = shortcut works in every app
 ├── HUD display -> the monitor under the pointer (GetCursorPos) at each capture
 │   start, inside that monitor's work area, at its own DPI (#486); while
 │   shown, checked every 250 ms; moves once two checks agree (#807)
 ├── HUD start -> a fresh first-frame attempt (own baseline, clock, and one
 │   recovery hide): no frame in 1.5 s -> hidden at once (not the exit fade,
-│   which needs a frame), so Rune releases the window and GPU surface and the
-│   next capture makes both again. A second start restarts the attempt, a
-│   previous attempt's reason never hides the new one, each attempt hides at
-│   most once, and the next start hides again if it is frame-less too. Rune's
-│   overlay failure is the Settings/log reason only. Logged once per reason;
-│   Settings' listener warning (dictation.md, rune_hud::FirstFrame)
+│   which needs a frame), so Rune releases the window and GPU surface. A
+│   frame-less attempt also backs the HUD off, so a GPU that can't present
+│   one is not asked to make a window, swapchain and device on every
+│   dictation: no show for 1 min, doubled per failed attempt in a row to
+│   30 min. Only a first frame its own attempt's resolve sees resets it; a
+│   late one keeps the backoff but leaves the HUD up for that recording,
+│   and a recording whose own attempt failed gets no further show either
+│   (one warning with the cooldown). A blocked start places and hides once,
+│   building nothing. A second start restarts a pending attempt, a previous
+│   attempt's reason never hides the new one, and each attempt hides at most
+│   once. Rune's overlay failure is the Settings/log reason only, still
+│   shown while the HUD backs off. Logged once per reason; Settings'
+│   listener warning (dictation.md, rune_hud::FirstFrame)
 ├── Launch again -> Running app shows its window; hidden (login) launch -> no-op
 ├── Tray icon -> White Hex mark; light taskbar (SystemUsesLightTheme) -> black mark
 │   └── Theme read when the tray is created; a later switch applies at the next launch
@@ -2287,10 +2456,17 @@ Windows beta                             // x64 (Vulkan GPU) and ARM64 (CPU)
 │   ├── Insert, Home, End, Page Up, Page Down alone -> Labs › Special keys
 │   │   alone; off, a saved one goes back to its default
 │   └── Any other key -> the recorder says "Unsupported key" and starts over
-├── Ctrl+Space -> Hold or Toggle -> Capture -> Stream (GPU) -> Paste
+├── Left Alt -> Hold or Toggle -> Capture -> Stream (GPU) -> Paste
 ├── Toggle's cancel shortcut (Escape by default) -> Discards a toggled recording;
 │   the hook takes it only while one records. Otherwise Escape -> Nothing (#786)
-├── One modifier alone (Right Alt, Right Ctrl) -> Shortcut; Alt/Win release masked (no menu, Start)
+├── One modifier alone (left Alt by default, #2278) -> Shortcut; Alt/Win release masked (no menu, Start)
+│   ├── AltGr (a synthesized Left Ctrl plus Right Alt) -> Never presses the default;
+│   │   an either-side Alt would press on every AltGr character
+│   ├── Another key joining the hold -> Its chord; the press cancels at once
+│   │   (Labs › Hold through other keys keeps a hold a second or more old)
+│   └── Another modifier the chord doesn't name -> Its chord too: cancels, and
+│       Toggle's press locks nothing; Alt's release goes unmasked, unless Hex
+│       swallowed a key of that chord (Paste Last's V re-arms the mask)
 ├── Microphone switched off in Settings › Privacy -> Onboarding Microphone row -> Allow opens it
 ├── Microphone -> System default or a saved device
 │   ├── Windows default input changes -> Switch once capture is idle // cpal's default-device report
@@ -2502,12 +2678,12 @@ records an Arch/i3 client-independent ownership check, not transcription accurac
 or physical logout, Wayland, or signed cross-version update proof.
 
 ```ts
-Linux General > Sound volume              // dictate.feedback.linux; X11 + Wayland
+Linux General > Sounds > Sound volume     // dictate.feedback.linux; X11 + Wayland
 ├── Default / older settings -> 50%
 ├── Slider at 0 -> No recording tones; the last level is kept
 └── Release above 0 -> Save and apply live; preview the start sound
-Linux General > Sounds                    // dictate.sound-theme
-└── Signature / Classic -> Save and apply live; preview the start sound
+Linux General > Sounds > a set            // dictate.sound-theme
+└── Press it -> Save and apply live; play its dictation
 
 Capture                                  // hex app and hex dictate
 ├── Shortcut starts capture -> Queue start sound immediately, before audio arrives
@@ -2568,9 +2744,7 @@ TypeScript SDK + local service             // macOS, Linux, Windows
 │   ├── ?process=global -> Global mode's output processing (Labs › Process API transcripts)
 │   └── ?timestamps=segment|word -> The model's own segment or word times
 │       └── 422 unsupported-timestamps when it has no such level (Labs › Timestamps in API transcripts)
-├── A web page's fetch -> Labs › Browser access to the local API
-│   ├── A listed origin -> OPTIONS 204 + Access-Control-Allow-Origin, then a token-bearing request
-│   └── Any other origin, or the lab off -> OPTIONS 401, no CORS headers
+├── A web page's fetch -> Never allowed: no CORS, OPTIONS is 401
 ├── Running desktop capture API -> Separate microphone ownership protocol
 │   ├── No capture silence gate           // model output, unlike hotkey dictation;
 │   │   └── its whole-clip run still drops a Whisper clip's silent edges,
@@ -2638,25 +2812,6 @@ model without that native level is `422 unsupported-timestamps`. Nothing
 estimates the times, and `/streams` and `/dictations` are unchanged
 ([labs.md](labs.md), [service contract](../specs/local-transcription-service.md)).
 
-Browser access (Labs › Browser access to the local API, off by default) lets a
-web page served from an origin listed in `labs.api_browser_origins` call this
-API with `fetch`. A browser sends its `OPTIONS` preflight without the bearer
-token, so Hex answers `204` for an allowed `Origin` before authentication, with
-`Access-Control-Allow-Origin` naming that origin, `GET, POST`, the four request
-headers, a 10-minute cache, and private-network permission only when the
-browser asked for it. Every other response, `401`, `404`, and SSE streams
-included, carries the same origin and `Vary: Origin`; the token is still
-required for every request. An origin that isn't listed, a missing `Origin`,
-and the lab off answer exactly as before (`OPTIONS` is `401`, with no CORS
-headers), and nothing allows credentials or `*`. Saved entries are normalized
-to `http://` or `https://` `scheme://host[:port]`; `*`, `null`, paths, queries,
-fragments, and userinfo are ignored. An IPv6 origin takes the browser's
-compressed form (`http://[::1]:5173`) and a non-ASCII host its punycode, since
-a request's `Origin` is matched exactly. Errors answered before a request is
-read (`400`, `408`, `431`, and the queue-full `503`) carry no CORS headers.
-Route tests inject the gate (`cors::Cors::gated`); nothing was observed from a
-real browser page.
-
 The [SDK guide](../../sdk/typescript/README.md),
 [service contract](../specs/local-transcription-service.md), and
 [SDK tests](../../sdk/typescript/test) distinguish those paths. Helper-only service
@@ -2695,6 +2850,11 @@ macOS debug runtime                      // not release navigation
 `hex app -- --snap OUT --scene NAME` -> Rendered fixtures    // not proof capture/download/update happened
 Linux `hex` -> the Linux window on Rune, in the Hex process // dev.rune-ui
 ├── Calls the host directly: saves settings through it; woken on host changes
+├── Wayland frame: where winit draws the client-side frame (GNOME), a floating
+│   decorated window's bottom corners round with the frame's headerbar, and are
+│   square when maximized, tiled or fullscreen, as the frame is; a compositor that
+│   draws the decorations itself (KDE, sway, Hyprland) keeps its square content
+│   // Rune #1188, checked in a nested weston and under sway, not on a real GNOME session
 ├── Sidebar: General, Modes, History
 ├── Transcription picker -> ChooseModel / CancelModel; progress from the snapshot
 ├── First run -> the onboarding story; Microphone only while the privacy switch is off
@@ -2740,7 +2900,230 @@ Windows `hex app` -> one tray process, Rune window // dev.rune-ui-windows
 ├── Modes app icons: the executable's first icon (PrivateExtractIconsW)
 └── Not yet: custom caption
 iOS prototype (`HEXMobile`) -> Record/transcribe/copy and keyboard handoff
-├── Experiments: Full keyboard, Apple Intelligence cleanup, Custom vocabulary
+├── Speech model preparation: launch dictates with Apple Speech on iOS 26 (an OS
+│   asset, no app download) or Parakeet V2; a preparation that says nothing for 30 s, or
+│   nothing new for 120 s, ends as "The speech model isn't ready. Try again." (time iOS
+│   has Hex suspended doesn't count), so "Checking the speech model" cannot stay at 0%
+│   forever. Apple's reservation and asset status are watched at 60 s the same way, a
+│   reservation or release that never answers is forgotten, and a keyboard check that
+│   hangs counts no strike toward Hex's handoff. The keyboard's own check has its own 30 s
+│   limit, retries after a real background trip, and a late answer can't reopen it. Unit
+│   tests only (`DictationControllerTests`, `SpeechModelInstallTests`,
+│   `AppleSpeechAssetReservationsTests`); no physical iPhone run checks either deadline.
+├── Experiments: Full keyboard, Apple Intelligence cleanup, Custom vocabulary,
+│   Hinglish, Greeklish, Two-language dictation, Adaptive touch, German spatial autocorrect,
+│   Swipe typing in more languages, Korean keyboard (두벌식), Dvorak punctuation keys, Comma
+│   and period keys, Quick accents, Emoji shortcodes, ABC under the emoji key, Keyboard
+│   themes (Black, White, Navy, Forest, Ember), Two-thumb selection, Delete swiped words
+│   letter by letter, Hide word suggestions, Join the keyboard when unfolded, Learn each
+│   language separately
+├── Full keyboard's languages (Settings › Keyboard › Languages, with Full chosen): one or
+│   more layouts, the space bar names the current one and a slide switches letters, accents
+│   and autocorrect, and the input mode reports the language typing
+│   (`UIInputViewController.primaryLanguage`, which Apple documents as superseding the
+│   Info.plist's en-US; unit-tested, whether the host's spelling follows it is unverified on
+│   a device); Italian restores unambiguous unaccented spellings on space ("perche" →
+│   "perché", "citta" → "città", `KeyboardLanguage.accentRestorations`) and offers "è" and
+│   "c'è" in the strip for "e" and "ce", which are words of their own and are never changed
+│   by space. Hungarian is a normal language (no experiment): its own QWERTZ rows and QWERTY,
+│   its nine accented vowels held on a e i o u (á é í ó ö ő ú ü ű), the iPhone's `hu`
+│   dictionary behind its autocorrect (a missing accent is the cheapest fix, "koszonom" →
+│   "köszönöm", while a word of its own such as "meg" keeps its spelling), English as its
+│   bilingual partner through the Latin-script rule, and no typing (spatial) model
+├── Korean keyboard (두벌식) (off by default, `experiments.koreanKeyboard`): Settings ›
+│   Experiments adds 한국어 to Settings › Keyboard › Languages, typed on the standard two-set
+│   rows (ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ / ㅁㄴㅇㄹㅎㅗㅓㅏㅣ / ㅋㅌㅊㅍㅠㅜㅡ, shift's ㅃㅉㄸㄲㅆ and ㅒㅖ, no
+│   qwerty or azerty choice). `HangulComposer` composes each syllable in the field (한 → 하 →
+│   ㅎ → nothing on delete, ㅗ then ㅏ → ㅘ and back, 닭 then ㅗ → 달고, 한 then ㅏ → 하나) by
+│   deleting only the part of the run that changed and inserting what it became; space,
+│   return, punctuation, a page or language switch, emoji, dictation, paste, undo, a selection
+│   action, the delete-word swipe, a cursor move or the keyboard hiding commits the run. A
+│   cursor move is recognized by the text before the run (a 32-character tail, so a host that
+│   trims the front of its window still matches if the window holds at least those 32
+│   characters plus the run), the text after the cursor, the field, and a reported selection;
+│   a host that trims more than the tail or reports no selection is best-effort, and a host
+│   that reports no text before the cursor joins syllables only while jamo come within about
+│   half a second (a cursor move followed by a jamo inside that window can't be detected). A
+│   field whose text after the cursor changes while you type (inline autocomplete) commits
+│   each jamo, so syllables don't join there. Korean has no accent holds, spelling
+│   dictionary, autocorrect, word suggestions or typing model, and while the
+│   experiment is off it is not listed, Automatic never picks it, and a stored "ko" is
+│   ignored.
+│   Unit tests only (`HangulComposerTests`, `HangulKeyboardTests`,
+│   `KoreanKeyboardGatingTests`): no CI compiles the iOS targets, and no physical iPhone run
+│   checks it
+├── German spatial autocorrect (off by default, `experiments.germanSpatialAutocorrect`):
+│   with Spatial autocorrect on too, the Deutsch layout reads taps with the German
+│   model Android ships (`ios/HEXKeyboard/TypingModel/de.hextm`, the same v3 file
+│   and hash as `android/app/src/main/assets/typing/de.hextm`) and the capitalisation
+│   sidecar beside it (`de.capitals`, built by `ios/scripts/build-german-capitals.py`,
+│   each word's share written with a capital): a noun takes its capital anywhere from
+│   a 95% share and after an article or determiner from 50% ("das haus" -> "das Haus",
+│   "zu leben" stays), whether the decoder corrected it or it was typed right, and a
+│   word that is also a common verb form or stem people type alone ("frage", "reise",
+│   "kauf", "schlaf") is capped at 94 so "ich frage" and "schlaf gut" stay, as is every
+│   two-letter word (a chat abbreviation like "gl", never a noun); "in" counts as a
+│   determiner ("in Ruhe") but "ohne" does not. A 50-94% word with no determiner, and
+│   any word the list lacks, keeps the dictionary's rule ("heute abend" -> "heute
+│   Abend"), and Auto-capitalization off adds none.
+│   Off, German keeps the dictionary engine and has no word list, so no letter odds,
+│   model completions or bilingual partner model
+├── Two-thumb selection (off by default, `experiments.twoThumbSelection`): while
+│   the space bar is the trackpad, a second finger starts a selection from the cursor;
+│   the finger further left moves the range's start and the other its end, each with its
+│   own `TrackpadCursor.State` (the trackpad's gain, acceleration and rows). Settling the
+│   trackpad at the start can move the host cursor once; after that it doesn't move while
+│   selecting. `UITextDocumentProxy` can read a selection but
+│   not set one, so the strip shows the text around the range with the selected part
+│   highlighted, within the text the host shares (`documentContextBeforeInput`/
+│   `AfterInput`). Both thumbs up shows Delete · Cut · Copy · Dictate · Cancel: Delete
+│   moves to the range's end with `adjustTextPosition` and deletes its characters one by
+│   one (an emoji is one), Cut copies then deletes, Copy copies and puts the cursor at the
+│   end, Cancel changes nothing, and any other key dismisses them without typing. Cut and
+│   Copy appear only with Full Access (the strip's clipboard rule). The range is clamped to
+│   the text the host shares around the cursor when the selection starts; if that context
+│   hasn't caught up yet the whole span is kept. An action runs only while the host still
+│   shares the whole range (a smaller or different text dismisses it, with a reason in the
+│   log). Dictate leaves the range in place and starts the keyboard's warm or in-keyboard
+│   dictation there; when its words are about to insert and the field still shows the range
+│   unchanged (same document and surrounding text), they replace it, otherwise they insert
+│   at the cursor as any dictation would and the range stays. Cancelling or hearing nothing
+│   leaves the range untouched. Where dictation would open Hex instead (no Full Access, or
+│   the keyboard can't dictate here), tapping Dictate dismisses the actions and opens Hex or
+│   shows the Full Access hint, leaving the text. An empty range ends like a
+│   normal trackpad lift. Delete and Cut call the host's delete once per Character, so a
+│   host that removes one code point per call (some Devanagari and Thai clusters) can leave
+│   fragments. Off, a second finger is ignored exactly as before.
+│   Unit tests only: no CI compiles the iOS targets, and no physical iPhone run checks it
+├── Swipe typing in more languages (off by default, `experiments.swipeMoreLanguages`): with
+│   Settings › Keyboard › Swipe typing on, a swipe reads the layout language's own word list
+│   wherever one is bundled, not only English and Spanish: also French (France), Polish, and
+│   German while Spatial autocorrect and German spatial autocorrect are on. A language with
+│   no typing model keeps a drag as a slide to another key. Off, only English and Spanish
+│   swipe, exactly as before.
+│   Gaps:
+│   - A word with ß (German) or œ/æ (French) has no key, so a swipe drops it from its
+│     candidates ("groß", "Straße", "cœur").
+│   - A swiped German noun goes in lowercase: the noun capitalisation applies to tapped
+│     words only.
+│   - French and Polish have no language-specific never-suggest rows (only the shared
+│     ones), so a swipe's top reading isn't filtered for language-specific offensive words
+│     there.
+│   - The decoder's parameters are tuned on English and Spanish, so French, Polish and
+│     German accuracy is unmeasured.
+│   Unit tests only: no CI compiles the iOS targets, and no physical iPhone run checks it
+├── Delete swiped words letter by letter (off by default, `experiments.swipeDeleteLetterByLetter`):
+│   right after a swipe, delete acts as anywhere else and takes one character, instead of the
+│   whole swiped word and the space the swipe added before it (#2321). The swipe's record
+│   clears with that delete, as with any delete, so what remains types like ordinary text.
+│   Off, delete takes the whole word back as before.
+│   Unit tests only: no CI compiles the iOS targets, and no physical iPhone run checks it
+├── Hide word suggestions (off by default, `experiments.hideWordSuggestions`): the full
+│   keyboard's strip keeps its height, the Hex key, Undo, status, notices and the Paste chip,
+│   but stops suggesting words: no typing or next-word suggestions, swipe readings, finished
+│   word emoji, or the chip that keeps what you typed while a correction is still ahead.
+│   Autocorrect still corrects on space, and after Delete the chip that puts back what it
+│   replaced (`.revert`) stays. With nothing suggested above it, holding a strip word to add it
+│   to Custom vocabulary is gone. Off, the strip suggests exactly as it did.
+│   Unit tests only: no CI compiles the iOS targets, and no physical iPhone run checks it
+├── Join the keyboard when unfolded (off by default, `experiments.joinKeyboardWhenUnfolded`):
+│   the Duo unfolded and held upright splits as Apple's does there; on, it draws one joined
+│   keyboard instead, at unfoldedWide's own 39 pt rows and 51.7 pt row pitch, 19 pt in from
+│   the keyboard's own side as unfoldedTall's keys sit from its screen's, with the iPhone's
+│   portrait bottom row (123 and the globe to z's right edge, the emoji key on x's column
+│   when the globe shows, space after them, return from m). Apple's Split Keyboard
+│   preference can't be read by a keyboard extension. Off, the split keyboard is unchanged.
+│   Unit tests only: no CI compiles the iOS targets, and no physical iPhone run checks it
+├── Dvorak punctuation keys (off by default, `experiments.dvorakPunctuation`): English's Dvorak
+│   letters gain comma and period ahead of P on row 1, whose nine keys narrow to start at the
+│   left margin and end at the same delete key, and a semicolon just left of the space bar,
+│   a letter wide (`referenceW`), only where the bar still holds a letter-wide space; on the
+│   Duo's split keyboard only the left half takes the two punctuation keys, on a pitch narrowed
+│   so the half keeps its right edge (its top-row keys are narrower than the right half's), and
+│   the semicolon takes from the left space bar, which keeps ending where it did. They type
+│   < > : with a shift you press or caps lock; auto-capitalization leaves the comma. A URL or
+│   email field keeps its own `.` key rather than a second key of the same kind. With the
+│   experiment off, every layout is key for key the one it was; a docked iPad keeps Apple's own
+│   rows. Adaptive touch learns the narrower key plane apart from Apple's Dvorak.
+│   Unit tests only (`KeyboardLayoutTests`, `FullKeyboardEngineTests`): no CI compiles the iOS
+│   targets, and no physical iPhone run checks it
+├── Comma and period keys (off by default, `experiments.commaPeriodKeys`): a comma just left
+│   of the space bar and a period just right of it, both a letter wide, on an iPhone's letters
+│   page in a plain text field. On the joined keyboard the comma starts where the bar used to
+│   start and the period ends where it used to end, the bar moving inward at both ends; on the
+│   Duo's split keyboard the comma takes from the left half's bar and the period from the right
+│   half's, each bar keeping its inner edge. Neither is added unless the bar still holds a
+│   letter-wide space after them (on an upright iPhone showing both the globe and emoji keys
+│   with the Hex key beside space there isn't room, so they're skipped). They type `,` and
+│   `.` with shift on too. The 123 and #+= pages, a URL or email field (which keeps its own
+│   `.`), an iPad, and English's Dvorak letters while Dvorak punctuation already puts both on
+│   row 1 are unchanged; off, every layout is key for key the one it was.
+│   Unit tests only (`KeyboardLayoutTests`, `FullKeyboardEngineTests`): no CI compiles the iOS
+│   targets, and no physical iPhone run checks it
+├── Quick accents (off by default, `experiments.quickAccents`): a held letter's callout opens
+│   on the language's preferred accent (`KeyboardLanguage.quickAccentPrimaries`: Spanish o →
+│   ó, English e → é, Italian a → à, capitals via the callout's own mapping), else the first
+│   variant after the key's own where it has no entry, found where the arrangement put it, so
+│   letting go in place types it. The cell under the finger at opening (`accentOpenCell`) is
+│   remembered, so the preselection stands until the finger moves into another cell, where
+│   sliding picks that one as before; letting go far below still cancels, and another key
+│   going down while the callout is held commits the preselection. Letters only: the 123 and
+│   #+= pages' held symbols, and the mark keys ˇ and ʼ, keep the key's own selected. Off, the
+│   callout opens on the key's own, as before.
+│   Unit tests only (`FullKeyboardEngineTests`): no CI compiles the iOS targets, and no
+│   physical iPhone run checks it
+├── Emoji shortcodes (off by default, `experiments.emojiShortcodes`): in a plain text field
+│   that takes emoji (the emoji key shows), with autocorrect on and secure entry off, while
+│   the full keyboard's text before the cursor ends in a colon and a name after whitespace or
+│   at the start of the field (":pizza": the first character a letter or digit, at least two
+│   letters or digits, then only a-z, 0-9, "_", "+" and "-", case-insensitive), the strip
+│   shows up to three emoji the bundled index names (`EmojiShortcode`, over `EmojiLibrary`
+│   and scripts/build-emoji-data.py's data) instead of its words: an exact name or alias
+│   first, then the names and keywords the token starts, one per family; your emoji use breaks
+│   exact ties and moves prefix matches up. A tap takes the whole token back and types the
+│   emoji with its skin tone, counted like one from the panel; typing the closing ":" of a
+│   name typed in full (":pizza:") types the emoji instead. The emoji search, fields with
+│   autocorrect off and secure fields get neither. No match leaves the strip and typing as
+│   they were, a colon inside a word ("abc:pizza") is not a token, and off, nothing changes.
+│   The setting is in the App Group, and without Full Access it reads off. Only names the
+│   index weighs as names or aliases complete: ":heart:", ":joy:" and ":tada:" are keywords
+│   in the data and stay text, and ":smile:" completes to 😊, its first alias, not 😄; adding
+│   them needs more aliases and a regenerated index, which scripts/build-emoji-data.py can't
+│   make from the repo alone (Unicode's emoji-test.txt 18.0 and CLDR 49 are not in the repo).
+│   Unit tests only (`EmojiShortcodeTests`): no CI compiles the iOS targets, and no physical
+│   iPhone run checks it
+├── Learn each language separately (off by default, `experiments.learnPerLanguage`):
+│   every typing correction and dictation fix is tagged with the language it was typed
+│   or dictated in; on, the keys learn a language's typos and rejections from that
+│   language's corrections and the untagged ones, and a dictation applies only the fixes
+│   made in its own language and the untagged ones (a fix learned in en-US applies in
+│   en-GB); learned words are one list per keyboard language
+│   (`keyboard.learnedWords.<code>`, seeded from the shared `keyboard.learnedWords`
+│   list), with bilingual autocorrect's partner keeping its own list and fixes; Delete
+│   what Hex learned erases the shared list and every language's; off, everything is the
+│   one shared list and learning it was before. Unit tests only: no CI compiles the iOS
+│   targets, and no physical iPhone run checks it
+├── Two-language dictation (off by default, `experiments.twoLanguageDictation`, iOS 26+):
+│   while Apple Speech dictates with `SpeechTranscriber`, one recording is read twice, in
+│   the language dictation resolved and in the first other keyboard language
+│   (`LanguageSettings.keyboardLanguages`, mapped with `dictationLanguage(for:)`) whose
+│   `SpeechTranscriber` model is installed and not set aside as failing; nothing downloads
+│   for it. Each reading keeps its timed runs (characters, timing, transcription
+│   confidence), and `TwoLanguageMerger` cuts both at the earlier of two word ends within
+│   150 ms, scores a reading by its confidence-weighted seconds clipped to each segment, and
+│   chooses a reading per segment with a 0.35 s cost per language change (ties to the
+│   primary). A seam word is dropped only when its span overlaps the last kept word's by half
+│   the shorter one. A switch keeps the runs' own characters and adds a space only when
+│   neither side has whitespace; when the second language wins nothing, the primary's
+│   original text is used unchanged, so CJK and Thai spacing, punctuation and untimed runs
+│   stay as Apple gave them. The text runs through the same pipeline with the primary
+│   language. No installed second language, a failed second analyzer, or no timed words in
+│   either reading dictates as before; a primary reading that finished silent reports empty
+│   so the caller throws its no-speech error without transcribing again; off, the path is
+│   unchanged.
+│   The app, keyboard, widgets, and tests built on a macOS 26 GitHub runner with 33 tests
+│   passing (run 45005571072, the latest observed verification); nothing is measured on an
+│   iPhone.
 ├── Custom vocabulary (off by default): a local list of up to 100 terms; every
 │   engine spells matched words the listed way before cleanup and again after
 │   formatting
@@ -2748,13 +3131,17 @@ iOS prototype (`HEXMobile`) -> Record/transcribe/copy and keyboard handoff
 │   Apple documents them only for DictationTranscriber, and Parakeet's batch
 │   path receives none
 └── Proof limits: unit tests only; no CI compiles the iOS targets
+Android keyboard -> English, Spanish, German and Bokmål typing assistance
+├── Keyboard > Suggest swear words (off) -> opt in to profanity; listed slurs never offered
+└── Type a listed word in full -> keep its spelling on space or tap its literal chip
 Unmerged Windows / deferred features -> Not part of this map
 ```
 
 Sources: [meeting.rs](../../src/meeting.rs),
 [meeting/watcher.rs](../../src/meeting/watcher.rs),
 [control/developer_control.rs](../../src/control/developer_control.rs),
-`SCENES` in [rune_ui.rs](../../src/rune_ui.rs), [iOS guide](../../ios/README.md).
+`SCENES` in [rune_ui.rs](../../src/rune_ui.rs), [iOS guide](../../ios/README.md),
+[Android typing and checks](../../android/benchmark/typing/README.md).
 The iOS custom vocabulary experiment stays off by default and keeps its list in
 the App Group. Apple Speech also receives it as a best-effort recognition hint,
 unverified on a physical iPhone; Apple documents contextual strings only for

@@ -77,10 +77,12 @@ pub(super) fn entries(ui: &Ui, language: &str, models: &[PickerModel]) -> Vec<En
 }
 
 fn state(ui: &Ui, def: &'static ModelDefinition, language: &str) -> State {
-    let installed = ui.picker.installed(def, def.language_for(language));
+    let language = def.language_for(language);
+    let installed = ui.picker.installed(def, language);
+    let ready = ui.picker.ready(def, language);
     if let Some((label, fraction)) = picker::preparation(ui, def) {
         State::Preparing { label, fraction }
-    } else if picker::transcription_selection_is_active(&ui.settings.transcription, def, installed)
+    } else if picker::transcription_selection_is_active(&ui.settings.transcription, def, ready)
         // A selected import that is missing or changed isn't what Hex runs.
         && (!def.id.is_custom() || def.available())
     {
@@ -185,13 +187,12 @@ pub(super) fn languages_label(def: &ModelDefinition) -> String {
 }
 
 /// Whether transcription reads the vocabulary: Whisper and Qwen3-ASR as
-/// their prompt, Parakeet only with Labs › Vocabulary biasing.
+/// their prompt, Parakeet unless Vocabulary's boost is Off.
 pub(super) fn reads_vocabulary(ui: &Ui, def: &ModelDefinition) -> bool {
     match def.vocabulary_use() {
         VocabularyUse::Prompt => true,
         VocabularyUse::Bias => {
-            let feature = crate::labs::Feature::VocabularyBiasing;
-            feature.shipped() && feature.on(&ui.settings)
+            ui.settings.vocabulary_boost != crate::dictation::vocabulary::VocabularyBoost::Off
         }
         VocabularyUse::None => false,
     }
@@ -222,6 +223,7 @@ pub(super) fn blurb(def: &ModelDefinition) -> &'static str {
         M::ParakeetV2 => tr("The English model before Parakeet Unified"),
         M::ParakeetV3 => tr("25 European languages, and it hears which one you speak"),
         M::Orukeet => tr("A Parakeet v3 fine-tune, a bit more accurate in 20 of its 25 languages"),
+        M::FluidSpeechPro => tr("A Parakeet v3 retrain with fewer wrong words in its 25 languages"),
         M::ParakeetUltra => tr("Parakeet v3, retrained for fewer wrong words"),
         M::Qwen3Asr06B => tr("Chinese and 29 more, and it reads your vocabulary"),
         M::QwenCleoAsr17B => tr("Egyptian Arabic, mixed with English"),
@@ -232,6 +234,7 @@ pub(super) fn blurb(def: &ModelDefinition) -> &'static str {
         M::Nemotron35Asr => tr("Writes while you talk, in 27 languages"),
         M::GigaAmV3 => tr("Russian, with punctuation. A small download"),
         M::NbWhisperMedium => tr("Whisper, tuned for Norwegian by its National Library"),
+        M::KbWhisperMedium => tr("Whisper, tuned for Swedish by its National Library"),
         M::GraniteSpeech5 => tr("IBM's model for seven languages, with punctuation"),
         M::AppleSpeech => tr("Apple's speech recognition, kept up to date by macOS"),
         M::Custom(_) => "",

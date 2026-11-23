@@ -88,7 +88,76 @@ pub fn focused_window_title(pid: i32) -> Option<String> {
     copy_string(&window, c"AXTitle").filter(|title| !title.is_empty())
 }
 
-/// How much of a focused window Labs › Screen vocabulary reads: elements
+/// Identity only at capture, never the window's title or selection: a
+/// capture with two paste commands must not put its summary in a different
+/// field of the same app, even when that field changed without any user
+/// input. The one content read is [`Self::field_text`], for Labs › Learn
+/// from corrections, from exactly the field this identity names.
+#[cfg(hex_capture)]
+pub(crate) struct PasteFocus {
+    application: CfObject,
+    window: CfObject,
+    field: CfObject,
+}
+
+// SAFETY: these three immutable Core Foundation references are owned by
+// one target token. Moving it transfers ownership to the output worker;
+// no AppKit object or thread-affine UI state is used, and it isn't Sync.
+#[cfg(hex_capture)]
+unsafe impl Send for PasteFocus {}
+
+/// Longest field text Labs › Learn from corrections reads, in UTF-16 units.
+/// A longer field is a document, not a correction, so it is skipped rather
+/// than truncated.
+#[cfg(hex_capture)]
+const MAX_FIELD_CHARS: usize = 20_000;
+
+#[cfg(hex_capture)]
+impl PasteFocus {
+    pub(crate) fn capture(pid: i32) -> Option<Self> {
+        let application = foreign_application(pid)?;
+        Some(Self {
+            window: copy_element(&application, c"AXFocusedWindow")?,
+            field: copy_element(&application, c"AXFocusedUIElement")?,
+            application,
+        })
+    }
+
+    pub(crate) fn unchanged(&self) -> bool {
+        [
+            (c"AXFocusedWindow", &self.window),
+            (c"AXFocusedUIElement", &self.field),
+        ]
+        .into_iter()
+        .all(|(attribute, before)| {
+            copy_element(&self.application, attribute).is_some_and(|now| {
+                // SAFETY: both references are retained AXUIElements.
+                unsafe { CFEqual(now.0, before.0) != 0 }
+            })
+        })
+    }
+
+    /// The field's whole text, for Labs › Learn from corrections. `None` for
+    /// a password (the `AXSecureTextField` role or subrole is checked before
+    /// the value is read), a value that isn't a string, or a field longer
+    /// than [`MAX_FIELD_CHARS`]. A field whose app names its character count
+    /// is measured before its value is asked for, so a document is never
+    /// materialized just to be dropped; a long value is skipped, never
+    /// truncated.
+    pub(crate) fn field_text(&self) -> Option<String> {
+        if is_secure_text_field(&self.field) {
+            return None;
+        }
+        if copy_number(&self.field, c"AXNumberOfCharacters")
+            .is_some_and(|characters| characters > MAX_FIELD_CHARS as i64)
+        {
+            return None;
+        }
+        copy_string_capped(&self.field, c"AXValue", MAX_FIELD_CHARS)
+    }
+}
+
+/// How much of a focused window Labs › Words on screen reads: elements
 /// walked, depth below the window, bytes collected, characters per value,
 /// and wall-clock time.
 const MAX_TEXT_NODES: usize = 1_500;

@@ -39,7 +39,10 @@ pub(crate) type Background = Box<dyn FnOnce(Option<&mut Model>) + Send>;
 /// Past this the stream is aborted and the clip is transcribed offline.
 const STREAM_FINISH_DEADLINE: Duration = Duration::from_millis(1_500);
 /// Audio fed past the clip's trimmed end (a release handled late) that the
-/// stream may still keep. Beyond it, the offline clip is authoritative.
+/// stream may still keep. The audio owner caps live feeding at the release
+/// plus the base tail (`DictationCapture::limit_stream_to`), but audio that
+/// arrived before the finish began can still sit past the clip's end. Beyond
+/// this, the offline clip is authoritative.
 const MAX_OVERFED_SAMPLES: usize = 16_000 / 4;
 /// How long a job may run once the engine starts it, before the clip's own
 /// share. It covers activating and prewarming the largest model inside the
@@ -53,7 +56,7 @@ const JOB_SECONDS_PER_AUDIO_SECOND: u32 = 8;
 /// How often a waiter whose job has not started checks whether the job ahead
 /// of it timed out, leaving the engine wedged.
 const QUEUE_POLL: Duration = Duration::from_millis(250);
-/// How often an idle engine looks again at Labs › Unload model when idle.
+/// How often an idle engine looks again at Labs › Free memory when idle.
 const IDLE_RECHECK: Duration = Duration::from_secs(30);
 /// How long dropping the engine waits for its thread. A native run that cannot
 /// be aborted is left to finish on its own.
@@ -89,6 +92,10 @@ pub(crate) enum Command {
         /// Where the stream publishes its text after each feed, when live
         /// text is on (Labs).
         partials: Option<Partials>,
+        /// Clip samples of Hex's own sounds at the capture's head (the
+        /// pre-roll and the start tone): speech it heard there is never a
+        /// lost opening.
+        head_ignored: usize,
     },
     Feed {
         stream: u64,
@@ -404,8 +411,14 @@ pub struct TranscriptionEngine {
     thread: Option<JoinHandle<()>>,
 }
 
-/// The GGUF selection the engine's model held after its last command.
-type Held = Arc<Mutex<Option<crate::transcription::models::TranscriptionSelection>>>;
+/// The GGUF selection the engine's model holds, and where that model runs.
+#[derive(Clone, Default)]
+struct HeldSnapshot {
+    selection: Option<crate::transcription::models::TranscriptionSelection>,
+    backend: Option<crate::transcription::SpeechBackend>,
+}
+
+type Held = Arc<Mutex<HeldSnapshot>>;
 
 /// A live stream for one capture. Feed it the capture's 16 kHz audio in order,
 /// then either [`TranscriptionEngine::finish`] or drop it to cancel.
@@ -535,7 +548,7 @@ impl TranscriptionEngine {
 
     /// Starts with no model loaded, remembering `selection` to reload on the
     /// first command that needs it, as [`Worker::park`] leaves the engine.
-    /// Labs › Unload model when idle uses this so a launch stays unloaded
+    /// Labs › Free memory when idle uses this so a launch stays unloaded
     /// until the first dictation. Whether it can stream is seeded from the
     /// model's definition, not measured on this device: the first capture
     /// either streams after the reload or falls back to its whole clip.
@@ -560,13 +573,23 @@ impl TranscriptionEngine {
         let requests = Arc::new(AtomicU64::new(0));
         let running = Running::default();
         let stalled = Arc::new(AtomicBool::new(false));
-        let held = Held::new(Mutex::new(
-            model
+        #[cfg(not(target_os = "macos"))]
+        let backend = model.as_ref().map(|model| model.backend().clone());
+        #[cfg(target_os = "macos")]
+        let backend = None;
+        let held = Held::new(Mutex::new(HeldSnapshot {
+            selection: model
                 .as_ref()
                 .and_then(|model| model.gguf_selection().cloned())
                 .or_else(|| parked.clone()),
-        ));
+            backend,
+        }));
         let dictating = Arc::new(AtomicBool::new(false));
+        // The model the engine adopts speaks for dictation (#1984). A parked
+        // engine has no model, so it leaves the last word alone.
+        if let Some(model) = &model {
+            publish_out_of_memory(model);
+        }
         let worker = Worker {
             model,
             parked,
@@ -588,7 +611,11 @@ impl TranscriptionEngine {
             stalled,
             requests,
             streams,
-            live_text: || crate::labs::live_text() || crate::dictation::live_text::demanded(),
+            live_text: || {
+                crate::labs::live_text()
+                    || crate::labs::stop_phrase()
+                    || crate::dictation::live_text::demanded()
+            },
             held,
             dictating,
             next_stream: AtomicU64::new(0),
@@ -640,7 +667,15 @@ impl TranscriptionEngine {
     }
 
     /// Opens a live stream when the loaded model can stream on this device.
+    #[cfg(test)]
     pub fn begin(&self) -> Option<LiveStream> {
+        self.begin_ignoring_head(0)
+    }
+
+    /// Opens a live stream whose opening-coverage check ignores `head_ignored`
+    /// clip samples: Hex's own sounds at the capture's head, never a lost
+    /// opening.
+    pub fn begin_ignoring_head(&self, head_ignored: usize) -> Option<LiveStream> {
         if !self.streams.load(Ordering::Acquire) {
             return None;
         }
@@ -653,6 +688,7 @@ impl TranscriptionEngine {
                 stream: id,
                 cancel: cancel.clone(),
                 partials: partials.clone(),
+                head_ignored,
             })
             .ok()?;
         Some(LiveStream {
@@ -853,6 +889,7 @@ impl TranscriptionEngine {
         self.held
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+            .selection
             .as_ref()
             == Some(selection)
     }
@@ -866,6 +903,17 @@ impl TranscriptionEngine {
         self.held
             .lock()
             .unwrap_or_else(|error| error.into_inner())
+            .selection
+            .clone()
+    }
+
+    /// Where the model held after its last finished command runs, for
+    /// `hex status`: `None` before a load and once it is unloaded.
+    pub(crate) fn held_backend(&self) -> Option<crate::transcription::SpeechBackend> {
+        self.held
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .backend
             .clone()
     }
 
@@ -914,7 +962,18 @@ fn reload(selection: &crate::transcription::models::TranscriptionSelection) -> R
 
 #[cfg(not(target_os = "macos"))]
 fn reload(selection: &crate::transcription::models::TranscriptionSelection) -> Result<Model> {
-    Model::load(selection)
+    let model = Model::load(selection)?;
+    publish_out_of_memory(&model);
+    Ok(model)
+}
+
+/// Publishes why the engine's model runs on the CPU (#1984). Only the model
+/// the engine holds speaks for dictation: the local API's own model, model
+/// preparation, and a superseded model swap load beside it and never get
+/// here.
+fn publish_out_of_memory(_model: &Model) {
+    #[cfg(not(target_os = "macos"))]
+    crate::transcription::gpu_health::set_out_of_memory(_model.out_of_memory());
 }
 
 static SHARED: std::sync::Mutex<std::sync::Weak<TranscriptionEngine>> =
@@ -1016,7 +1075,7 @@ impl Drop for TranscriptionEngine {
 }
 
 struct Worker {
-    /// `None` while unloaded for idleness (Labs › Unload model when idle) or
+    /// `None` while unloaded for idleness (Labs › Free memory when idle) or
     /// after its reload failed.
     model: Option<Model>,
     /// What an unloaded model reloads, before the next command that needs it.
@@ -1062,10 +1121,18 @@ impl Worker {
                     stream,
                     cancel,
                     partials,
+                    head_ignored,
                 } => {
                     self.dictating.store(true, Ordering::Release);
                     crate::dictation::vocabulary::for_dictation(|| {
-                        self.stream(stream, &cancel, partials.as_ref(), &commands, &mut next);
+                        self.stream(
+                            stream,
+                            &cancel,
+                            partials.as_ref(),
+                            head_ignored,
+                            &commands,
+                            &mut next,
+                        );
                     });
                     self.dictating.store(false, Ordering::Release);
                 }
@@ -1124,14 +1191,23 @@ impl Worker {
                 // Stale input for a stream that already ended.
                 Command::Feed { .. } | Command::Cancel { .. } => {}
             }
-            // Any command may load or switch the model.
+            // Any command may load or switch the model. A parked engine has
+            // no model, so it leaves the last word alone.
+            if let Some(model) = self.model.as_ref() {
+                publish_out_of_memory(model);
+            }
+            // Only when the engine is quiet: a queued Begin, deferred work,
+            // or a recording must never wait behind the probe.
+            if next.is_empty() && !recording() {
+                self.refresh_stream();
+            }
             self.publish_streams();
             self.publish_selection();
             self.idle_since = Instant::now();
         }
     }
 
-    /// The next command. With Labs › Unload model when idle on, it unloads
+    /// The next command. With Labs › Free memory when idle on, it unloads
     /// the model once nothing has used it for the chosen time and nothing
     /// records (a dictation or a meeting); between commands no request runs.
     fn wait(&mut self, commands: &Receiver<Command>) -> Option<Command> {
@@ -1140,7 +1216,14 @@ impl Worker {
                 // Settings may turn it on meanwhile.
                 match commands.recv_timeout(IDLE_RECHECK) {
                     Ok(command) => return Some(command),
-                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Timeout) => {
+                        // An idle tick, so a toggle change while nothing
+                        // records reaches the model before a capture opens.
+                        if !recording() {
+                            self.refresh_stream();
+                        }
+                        continue;
+                    }
                     Err(RecvTimeoutError::Disconnected) => return None,
                 }
             };
@@ -1152,8 +1235,11 @@ impl Worker {
                 Ok(command) => return Some(command),
                 Err(RecvTimeoutError::Disconnected) => return None,
                 Err(RecvTimeoutError::Timeout) => {
-                    if self.idle_since.elapsed() >= after && !recording() {
-                        self.park();
+                    if !recording() {
+                        self.refresh_stream();
+                        if self.idle_since.elapsed() >= after {
+                            self.park();
+                        }
                     }
                 }
             }
@@ -1174,6 +1260,18 @@ impl Worker {
         self.model = None;
         tracing::info!(model = ?selection.model, "unloaded the idle speech model");
         self.parked = Some(selection);
+        // The device goes with the model: `hex status` must not keep naming it.
+        self.publish_selection();
+    }
+
+    /// Adopts a changed Labs › Faster live text or env geometry while
+    /// nothing records. A loaded model re-probes; an unloaded one takes the
+    /// change when it next loads, and one the gated probe never cleared
+    /// stays off.
+    fn refresh_stream(&mut self) {
+        if let Some(model) = self.model.as_mut() {
+            model.refresh_stream();
+        }
     }
 
     /// The model, reloading an unloaded one first. Audio sent meanwhile waits
@@ -1216,17 +1314,20 @@ impl Worker {
     }
 
     /// Any command may load or switch the model (a dictation job activates
-    /// its selection), so the held selection is refreshed after each. An
-    /// unloaded model still counts as held: work sent to it reloads it.
+    /// its selection), so the held selection and its device are refreshed
+    /// after each. An unloaded model still counts as held, with no device.
     fn publish_selection(&self) {
-        let current = match &self.model {
+        let selection = match &self.model {
             Some(model) => model.gguf_selection(),
             None => self.parked.as_ref(),
         };
+        #[cfg(not(target_os = "macos"))]
+        let backend = self.model.as_ref().map(|model| model.backend().clone());
+        #[cfg(target_os = "macos")]
+        let backend = None;
         let mut held = self.held.lock().unwrap_or_else(|error| error.into_inner());
-        if held.as_ref() != current {
-            *held = current.cloned();
-        }
+        held.selection = selection.cloned();
+        held.backend = backend;
     }
 
     fn run_offline(&mut self, clip: Vec<f32>, offline: Offline, source: Source, job: Job) {
@@ -1254,6 +1355,7 @@ impl Worker {
         id: u64,
         cancel: &CancelToken,
         partials: Option<&Partials>,
+        head_ignored: usize,
         commands: &Receiver<Command>,
         next: &mut VecDeque<Command>,
     ) {
@@ -1298,8 +1400,12 @@ impl Worker {
             return;
         };
         let trailing_silence = stream_trailing_silence(model);
+        let closing_mark = stream_requires_closing_mark(model);
+        let opening_slack = stream_opening_slack(model);
         let ended = model.with_stream(&options, cancel, |stream| {
-            let mut capped = PauseCap::new(stream, trailing_silence);
+            let mut capped = PauseCap::new(stream, trailing_silence)
+                .ignoring_head(head_ignored)
+                .opening_slack(opening_slack);
             let ended = drive_stream(
                 id,
                 &mut capped,
@@ -1336,6 +1442,7 @@ impl Worker {
                     finish_ms = started.elapsed().as_millis(),
                     "finished live stream"
                 );
+                let result = result.and_then(|text| check_closing_mark(text, closing_mark));
                 match result {
                     Ok(text) => job.finish(Ok(Transcribed {
                         text,
@@ -1375,15 +1482,15 @@ impl Worker {
         commands: &Receiver<Command>,
         next: &mut VecDeque<Command>,
     ) {
-        let Some(options) = self
-            .model()
-            .and_then(|model| model.stream_options().cloned())
-        else {
-            return;
-        };
         if cancel.is_cancelled() {
             return;
         }
+        let options = self
+            .model()
+            .and_then(|model| model.stream_options().cloned());
+        let Some(options) = options else {
+            return;
+        };
         self.running.enter(cancel);
         let Some(model) = self.model.as_mut() else {
             return;
@@ -1578,6 +1685,18 @@ mod tests {
             .collect()
     }
 
+    /// A clip with `(start_ms, length_ms)` tone bursts in order, then the
+    /// 200 ms tail after a stop.
+    fn sparse_speech(bursts: &[(usize, usize)]) -> Vec<f32> {
+        let mut clip = Vec::new();
+        for &(start_ms, length_ms) in bursts {
+            clip.resize(start_ms * 16, 0.0);
+            clip.extend(tone(length_ms * 16));
+        }
+        clip.extend(vec![0.0; 3_200]);
+        clip
+    }
+
     #[test]
     fn a_dictation_stream_hears_only_the_ends_of_long_pauses() {
         // Quiet first, as the pre-roll is, so the noise floor starts low.
@@ -1653,12 +1772,43 @@ mod tests {
         text_start_ms: Option<u64>,
         text_end_ms: u64,
     ) -> Result<String, String> {
+        finish_with_text_bounds_ignoring_head(clip, 0, text_start_ms, text_end_ms)
+    }
+
+    /// As above, with `head_ignored` clip samples of Hex's own sounds at the
+    /// capture's head, as the audio owner passes for a real capture.
+    fn finish_with_text_bounds_ignoring_head(
+        clip: &[f32],
+        head_ignored: usize,
+        text_start_ms: Option<u64>,
+        text_end_ms: u64,
+    ) -> Result<String, String> {
+        finish_with_opening_slack(
+            clip,
+            head_ignored,
+            text_start_ms,
+            text_end_ms,
+            UNTRANSCRIBED_SLACK_SAMPLES,
+        )
+    }
+
+    /// As above, with `slack` samples of speech the stream may leave before
+    /// its text starts, for a model whose first-word time lags its audio.
+    fn finish_with_opening_slack(
+        clip: &[f32],
+        head_ignored: usize,
+        text_start_ms: Option<u64>,
+        text_end_ms: u64,
+        slack: usize,
+    ) -> Result<String, String> {
         let mut fake = FakeStream {
             text_start_ms,
             text_end_ms: Some(text_end_ms),
             ..FakeStream::default()
         };
-        let mut capped = PauseCap::new(&mut fake, 0);
+        let mut capped = PauseCap::new(&mut fake, 0)
+            .ignoring_head(head_ignored)
+            .opening_slack(slack);
         for chunk in clip.chunks(1_600) {
             capped.feed(chunk).unwrap();
         }
@@ -1746,6 +1896,279 @@ mod tests {
         assert_eq!(
             finish_with_text_bounds(&clip, Some(500), 4_200),
             Ok(format!("streamed {}", clip.len()))
+        );
+    }
+
+    #[test]
+    fn parakeets_late_first_word_time_is_not_a_lost_opening() {
+        // An illustrative late first-word timestamp: speech at 220-860 ms and
+        // text at 1280 ms is a 1,060 ms lag, just past the top of the measured
+        // 100-1000 ms range. With no pre-roll to exclude, this is a stream
+        // that lost nothing, as the CPU measurement suggests; the 400 ms
+        // slack refused it.
+        let mut clip = vec![0.0; 3_520]; // 220 ms
+        clip.extend(tone(10_240)); // speech, 220-860 ms
+        clip.extend(vec![0.0; 6_720]); // pause to the text, 860-1280 ms
+        clip.extend(tone(5_120)); // the text's own speech, 1280-1600 ms
+        clip.extend(vec![0.0; 3_200]);
+        assert!(
+            finish_with_text_bounds(&clip, Some(1_280), 1_600)
+                .is_err_and(|reason| reason.contains("precedes")),
+            "the tight slack is what refused this stream"
+        );
+        assert_eq!(
+            finish_with_opening_slack(&clip, 0, Some(1_280), 1_600, PARAKEET_OPENING_SLACK_SAMPLES),
+            Ok(format!("streamed {}", clip.len()))
+        );
+    }
+
+    #[test]
+    fn parakeets_opening_slack_still_refuses_a_lost_opening() {
+        // 3 s of speech the stream lost, then a 1 s pause, then the text at
+        // 4.5 s: more than 1.2 s of slack plus the 300 ms threshold before t0.
+        let mut clip = vec![0.0; 8_000]; // 500 ms
+        clip.extend(tone(48_000)); // the lost speech, 500-3500 ms
+        clip.extend(vec![0.0; 16_000]); // a 1 s pause
+        clip.extend(tone(16_000)); // the text's own speech, 4500-5500 ms
+        clip.extend(vec![0.0; 3_200]);
+        let result =
+            finish_with_opening_slack(&clip, 0, Some(4_500), 5_500, PARAKEET_OPENING_SLACK_SAMPLES);
+        assert!(
+            result
+                .as_ref()
+                .is_err_and(|reason| reason.contains("precedes")),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn parakeets_opening_slack_edge_is_one_frame() {
+        use crate::transcription::pause_segmenter::FRAME_SAMPLES;
+        // The 1.2 s slack with the 300 ms threshold: a speech frame counts
+        // only while it ends strictly before t0 - 1.2 s, and the span rule
+        // refuses speech that opens 300 ms or more before that edge once
+        // 100 ms is detected before the 400 ms edge. So 15 frames (300 ms)
+        // ending one frame before the edge are refused, while 14 (280 ms)
+        // ending at the edge are kept: the edge frame is not counted and the
+        // span stays under 300 ms.
+        let text_start_ms: u64 = 3_000;
+        let covered = text_start_ms as usize * 16 - PARAKEET_OPENING_SLACK_SAMPLES; // 28_800
+        let frame: usize = FRAME_SAMPLES;
+        let threshold = UNTRANSCRIBED_SPEECH_SAMPLES / frame; // 15 frames
+        for (speech_end, frames, refused) in [
+            (covered - frame, threshold, true), // 28_480: all 15 frames count
+            (covered, threshold - 1, false),    // 28_800: 13 count, 280 ms span
+        ] {
+            let mut clip = vec![0.0; speech_end - frames * frame];
+            clip.extend(tone(frames * frame)); // the lost opening
+            clip.extend(vec![0.0; 4_800]); // the pause to the text
+            let result = finish_with_opening_slack(
+                &clip,
+                0,
+                Some(text_start_ms),
+                text_start_ms + 300,
+                PARAKEET_OPENING_SLACK_SAMPLES,
+            );
+            assert_eq!(
+                result
+                    .as_ref()
+                    .is_err_and(|reason| reason.contains("precedes")),
+                refused,
+                "{speech_end}: {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn parakeets_sparse_opening_spanning_1800_ms_is_refused() {
+        // Production's waited case: text at 3.92 s with 720 ms of speech
+        // detected from 920 ms, but only 240 ms of it before the slack's edge
+        // at 2.72 s, under the 300 ms threshold. Its span alone refuses it.
+        let clip = sparse_speech(&[
+            (920, 80),
+            (1_620, 80),
+            (2_320, 80),
+            (2_920, 200),
+            (3_220, 280),
+        ]);
+        let result =
+            finish_with_opening_slack(&clip, 0, Some(3_920), 4_220, PARAKEET_OPENING_SLACK_SAMPLES);
+        assert!(
+            result.as_ref().is_err_and(
+                |reason| reason.contains("speech from 920 ms precedes it and spans 1800 ms")
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn parakeets_sparse_opening_spanning_3080_ms_is_refused() {
+        // The other waited case: text at 4.48 s with 520 ms of speech
+        // detected from 200 ms, but only 240 ms of it before the slack's edge
+        // at 3.28 s, under the 300 ms threshold. Its span alone refuses it.
+        let clip = sparse_speech(&[
+            (200, 80),
+            (900, 80),
+            (1_600, 80),
+            (3_400, 140),
+            (3_920, 140),
+        ]);
+        let result =
+            finish_with_opening_slack(&clip, 0, Some(4_480), 4_780, PARAKEET_OPENING_SLACK_SAMPLES);
+        assert!(
+            result.as_ref().is_err_and(
+                |reason| reason.contains("speech from 200 ms precedes it and spans 3080 ms")
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn parakeets_sparse_frames_cannot_hide_a_dense_lost_opening() {
+        // Four old frames (80 ms) around 1 s, then 800 ms of lost speech from
+        // 2.8 s to 3.6 s, text at 4 s. Counting only before the 1.2 s edge
+        // (2.8 s) sees 80 ms and accepts; counting before the 400 ms edge
+        // (3.6 s) sees the dense speech, so the 1.84 s span refuses it.
+        let clip = sparse_speech(&[(960, 80), (2_800, 800)]);
+        let result =
+            finish_with_opening_slack(&clip, 0, Some(4_000), 4_300, PARAKEET_OPENING_SLACK_SAMPLES);
+        assert!(
+            result.as_ref().is_err_and(
+                |reason| reason.contains("speech from 960 ms precedes it and spans 1840 ms")
+            ),
+            "{result:?}"
+        );
+    }
+
+    #[test]
+    fn parakeets_span_rule_needs_100_ms_before_the_old_edge() {
+        // Speech at 400 ms starts 1.4 s before the 1.2 s edge at 1.8 s. Four
+        // frames (80 ms) before the 400 ms edge are under the rule's minimum
+        // and kept; five (100 ms) are refused.
+        for (frames, refused) in [(4usize, false), (5, true)] {
+            let mut clip = vec![0.0; 400 * 16];
+            clip.extend(tone(frames * 20 * 16));
+            clip.extend(vec![0.0; 3_200]);
+            let result = finish_with_opening_slack(
+                &clip,
+                0,
+                Some(3_000),
+                3_300,
+                PARAKEET_OPENING_SLACK_SAMPLES,
+            );
+            if refused {
+                assert!(
+                    result.as_ref().is_err_and(|reason| reason
+                        .contains("speech from 400 ms precedes it and spans 1400 ms")),
+                    "{frames}: {result:?}"
+                );
+            } else {
+                assert_eq!(result, Ok(format!("streamed {}", clip.len())), "{frames}");
+            }
+        }
+    }
+
+    #[test]
+    fn parakeets_span_rule_edge_is_one_frame() {
+        // Text at 3 s puts the 1.2 s edge at 1.8 s: speech starting exactly
+        // 300 ms before it is refused, one frame later (280 ms) is kept. Both
+        // have the rule's 100 ms minimum before the 400 ms edge.
+        for (speech_start_ms, refused) in [(1_500usize, true), (1_520, false)] {
+            let mut clip = vec![0.0; speech_start_ms * 16];
+            clip.extend(tone(100 * 16));
+            clip.extend(vec![0.0; 3_200]);
+            let result = finish_with_opening_slack(
+                &clip,
+                0,
+                Some(3_000),
+                3_300,
+                PARAKEET_OPENING_SLACK_SAMPLES,
+            );
+            if refused {
+                assert!(
+                    result.as_ref().is_err_and(|reason| {
+                        reason.contains("speech from") && reason.contains("spans 300 ms")
+                    }),
+                    "{speech_start_ms}: {result:?}"
+                );
+            } else {
+                assert_eq!(
+                    result,
+                    Ok(format!("streamed {}", clip.len())),
+                    "{speech_start_ms}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn parakeets_measured_lags_are_not_lost_openings() {
+        // Production refused these streams. Their first detected speech came
+        // 820-1420 ms before the text, under the span rule's 1.5 s, so this
+        // fix keeps them accepted.
+        for (speech_start_ms, text_start_ms) in
+            [(220u64, 1_280u64), (300, 1_120), (220, 1_440), (340, 1_760)]
+        {
+            let mut clip = vec![0.0; speech_start_ms as usize * 16];
+            clip.extend(tone(640 * 16));
+            clip.extend(vec![0.0; 3_200]);
+            let result = finish_with_opening_slack(
+                &clip,
+                0,
+                Some(text_start_ms),
+                text_start_ms + 300,
+                PARAKEET_OPENING_SLACK_SAMPLES,
+            );
+            assert_eq!(
+                result,
+                Ok(format!("streamed {}", clip.len())),
+                "{speech_start_ms} -> {text_start_ms}"
+            );
+        }
+    }
+
+    #[test]
+    fn hexs_own_sounds_at_the_captures_head_are_not_a_lost_opening() {
+        // The pre-roll (0-0.45 s), the 272 ms Classic start tone (0.45-0.72 s),
+        // and the tap's click (0.72-0.82 s) are Hex's own sounds; the first
+        // word comes 0.8 s later. The stream lost nothing, so the clip is kept.
+        let mut clip = vec![0.0; 7_200]; // 450 ms of pre-roll
+        clip.extend(tone(4_352)); // the 272 ms start tone
+        clip.extend(tone(1_600)); // the tap's click, 100 ms
+        clip.extend(vec![0.0; 12_448]); // room up to 1.6 s
+        clip.extend(tone(16_000)); // the dictation itself, 1.6-2.6 s
+        clip.extend(vec![0.0; 3_200]);
+        let head = 14_400; // 900 ms: the pre-roll, the tone, and its margin
+        assert_eq!(
+            finish_with_text_bounds_ignoring_head(&clip, head, Some(1_600), 2_600),
+            Ok(format!("streamed {}", clip.len()))
+        );
+        // Without the exclusion the same sounds are 400 ms of "speech" before
+        // the text, which is what a real model sees when they are all the head
+        // holds.
+        assert!(
+            finish_with_text_bounds(&clip, Some(1_600), 2_600)
+                .is_err_and(|reason| reason.contains("precedes")),
+            "the head exclusion is what keeps this stream"
+        );
+    }
+
+    #[test]
+    fn a_lost_opening_after_a_long_pause_still_falls_back_to_the_whole_clip() {
+        // The review's case: 1.6 s of speech the stream lost, then a 1 s
+        // pause, then the text at 3.5 s. The pause is longer than the check's
+        // 400 ms slack, so nothing but counting the speech itself can catch it.
+        let mut clip = vec![0.0; 14_400]; // 900 ms: pre-roll and start tone
+        clip.extend(tone(25_600)); // 1.6 s of lost speech, 0.9-2.5 s
+        clip.extend(vec![0.0; 16_000]); // a 1 s pause
+        clip.extend(tone(16_000)); // the text's own speech, 3.5-4.5 s
+        clip.extend(vec![0.0; 3_200]);
+        let result = finish_with_text_bounds_ignoring_head(&clip, 14_400, Some(3_500), 4_500);
+        assert!(
+            result.as_ref().is_err_and(
+                |reason| reason.contains("precedes") && reason.contains("from 900 to 2500 ms")
+            ),
+            "{result:?}"
         );
     }
 
@@ -2574,33 +2997,42 @@ mod tests {
             engine.stream_refusal(),
             Some("no streaming speech model is loaded")
         );
-        *engine.held.lock().unwrap() = Some(crate::transcription::models::TranscriptionSelection {
-            model: crate::transcription::models::TranscriptionModelId::ParakeetUnifiedEnglish,
-            language: "en".into(),
-        });
+        *engine.held.lock().unwrap() = HeldSnapshot {
+            selection: Some(crate::transcription::models::TranscriptionSelection {
+                model: crate::transcription::models::TranscriptionModelId::ParakeetUnifiedEnglish,
+                language: "en".into(),
+            }),
+            backend: None,
+        };
         assert_eq!(
             engine.stream_refusal(),
             Some(
                 "the speech model isn't streaming on this device (a CPU, or a GPU that could not start streaming)"
             )
         );
-        *engine.held.lock().unwrap() = Some(crate::transcription::models::TranscriptionSelection {
-            model: crate::transcription::models::TranscriptionModelId::ParakeetV3,
-            language: "en".into(),
-        });
+        *engine.held.lock().unwrap() = HeldSnapshot {
+            selection: Some(crate::transcription::models::TranscriptionSelection {
+                model: crate::transcription::models::TranscriptionModelId::ParakeetV3,
+                language: "en".into(),
+            }),
+            backend: None,
+        };
         assert_eq!(
             engine.stream_refusal(),
             Some("the selected speech model doesn't stream")
         );
         // An imported model's catalog entry says it can't stream, but its
         // GGUF is only checked when it loads: blame the device instead.
-        *engine.held.lock().unwrap() = Some(crate::transcription::models::TranscriptionSelection {
-            model: crate::transcription::models::TranscriptionModelId::Custom(
-                crate::transcription::models::CustomModelId::parse("custom-0123456789abcdef")
-                    .unwrap(),
-            ),
-            language: "en".into(),
-        });
+        *engine.held.lock().unwrap() = HeldSnapshot {
+            selection: Some(crate::transcription::models::TranscriptionSelection {
+                model: crate::transcription::models::TranscriptionModelId::Custom(
+                    crate::transcription::models::CustomModelId::parse("custom-0123456789abcdef")
+                        .unwrap(),
+                ),
+                language: "en".into(),
+            }),
+            backend: None,
+        };
         assert_eq!(
             engine.stream_refusal(),
             Some(

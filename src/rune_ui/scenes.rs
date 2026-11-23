@@ -89,22 +89,23 @@ pub(super) const SCENES: &[Scene] = &[
         ui.history.clear_armed = true;
         ui.pane = Pane::History;
     }),
-    // Labs › Dictation stats: the Stats button with its dialog open.
+    // Labs › Dictation stats: the Stats button with its dialog open, the
+    // year heatmap, and the hourly strip.
     ("history-stats", |ui| {
         *ui = portal_fixture();
         ui.history = history::HistoryPane::fixture();
         ui.history.stats = Some(history::HistoryPane::fixture_stats());
+        ui.history.usage = Some(history::HistoryPane::fixture_usage());
         ui.history.stats_open = true;
         ui.settings.labs.history_stats = true;
         crate::labs::apply(&ui.settings.labs);
         ui.pane = Pane::History;
     }),
-    // Labs › Select multiple dictations: two entries selected, with the card
+    // Two entries selected, with the card
     // that copies or deletes them.
     ("history-selection", |ui| {
         *ui = portal_fixture();
         ui.history = history::HistoryPane::fixture_selection();
-        ui.settings.labs.history_multi_select = true;
         ui.pane = Pane::History;
     }),
     // Labs › Screenshots' Captures: a shot, a recording with its words, and
@@ -128,6 +129,66 @@ pub(super) const SCENES: &[Scene] = &[
         ui.history = history::HistoryPane::fixture_empty();
         ui.pane = Pane::History;
     }),
+    // Labs › Paste Last picker (macOS): dictations, annotations, screenshots
+    // and recordings in one History, with its type filter, its search, and
+    // its empty states. The unified pane has no golden: it exists only in
+    // macOS builds, and goldens render on Linux.
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history", |ui| {
+        unified_history(ui);
+        // The words a deliberate cancel kept: History-only, never pasted.
+        ui.history.entries[2].cancelled = true;
+    }),
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-filtered", |ui| {
+        unified_history(ui);
+        ui.history
+            .unified
+            .set_filter(history::unified::Filter::Annotations);
+    }),
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-types", |ui| {
+        unified_history(ui);
+        ui.open = Some(Menu::Pick("history-type"));
+    }),
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-capture", |ui| {
+        unified_history(ui);
+        ui.history.selected = None;
+        ui.history.selection.clear();
+        ui.history.unified.picked = Some(std::path::PathBuf::from(
+            "/Users/alex/Library/Application Support/Scrawl/captures/1.scrawl",
+        ));
+    }),
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-empty", |ui| {
+        unified_history(ui);
+        ui.history.entries.clear();
+        ui.captures.entries.clear();
+    }),
+    // A search with matches, as the store and the captures' own words
+    // answer it.
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-search", |ui| {
+        unified_history(ui);
+        ui.history.search = rune::TextEdit::new("deploy".to_string());
+        ui.history.entries.retain(|e| {
+            e.final_text.to_lowercase().contains("deploy")
+                || e.application.as_deref() == Some("Slack")
+        });
+        ui.captures.entries.clear();
+    }),
+    // A search with nothing to show: the list keeps its field and says so,
+    // and no card stays open.
+    #[cfg(all(target_os = "macos", hex_capture))]
+    ("mac-history-search-empty", |ui| {
+        unified_history(ui);
+        ui.history.search = rune::TextEdit::new("quarterly budget".to_string());
+        ui.history.selected = None;
+        ui.history.selection.clear();
+        ui.history.entries.clear();
+        ui.captures.entries.clear();
+    }),
     ("output", |ui| {
         *ui = portal_fixture();
         output::fixture(ui);
@@ -146,6 +207,14 @@ pub(super) const SCENES: &[Scene] = &[
     }),
     ("output-empty", |ui| {
         *ui = portal_fixture();
+        ui.pane = Pane::Output;
+    }),
+    // Labs › Dictation style on: its row sits above Every dictation.
+    ("output-style", |ui| {
+        *ui = portal_fixture();
+        output::fixture(ui);
+        ui.settings.labs.dictation_style = true;
+        ui.settings.labs.dictation_style_choice = crate::app_settings::DictationStyle::Notes;
         ui.pane = Pane::Output;
     }),
     ("modes", |ui| {
@@ -178,19 +247,6 @@ pub(super) const SCENES: &[Scene] = &[
         *ui = portal_fixture();
         modes::fixture(ui);
         ui.open = Some(Menu::Transformations);
-        ui.pane = Pane::Modes;
-    }),
-    // Labs › Switch model with app: each mode's speech model and language.
-    ("modes-speech", |ui| {
-        *ui = mac_fixture();
-        modes::fixture(ui);
-        ui.settings.labs.app_model_switching = true;
-        ui.settings.dictation_processing.modes[0].speech =
-            Some(crate::app_settings::KeyboardModelChoice {
-                model: TranscriptionModelId::ParakeetV3,
-                language: "es".into(),
-            });
-        ui.picker.installed = Some(vec![TranscriptionModelId::ParakeetV3]);
         ui.pane = Pane::Modes;
     }),
     ("picker", |ui| {
@@ -420,21 +476,16 @@ pub(super) const SCENES: &[Scene] = &[
             TranscriptionModelId::ParakeetV3,
         ]);
     }),
-    // The sound sets sheet at rest, then Wood's dictation recording.
+    // The sound sets sheet at rest, then Wood's dictation playing with the
+    // sounds off.
     ("sound-sets", |ui| {
         *ui = mac_fixture();
         sound_sets::fixture(ui, None);
     }),
     ("sound-sets-playing", |ui| {
         *ui = mac_fixture();
-        sound_sets::fixture(
-            ui,
-            Some((
-                crate::feedback::SoundSet::Wood,
-                crate::feedback::Audition::Dictation,
-                900.0,
-            )),
-        );
+        ui.settings.sound_effects = false;
+        sound_sets::fixture(ui, Some(crate::feedback::SoundSet::Wood));
     }),
     ("mac-microphone-missing", |ui| {
         *ui = mac_fixture();
@@ -567,6 +618,24 @@ pub(super) const SCENES: &[Scene] = &[
         *ui = mac_fixture();
         ui.meetings.view = meetings::View::Settings;
         ui.pane = Pane::Meetings;
+        calls_fixture(ui, false);
+    }),
+    // The Calls sheet: Ask each time for every call, Slack huddles
+    // recording automatically, a website not offered, and the calls Hex
+    // has seen, newest first.
+    ("meetings-calls", |ui| {
+        *ui = mac_fixture();
+        ui.meetings.view = meetings::View::Settings;
+        ui.pane = Pane::Meetings;
+        calls_fixture(ui, true);
+    }),
+    // Before Hex has seen a call or saved an answer.
+    ("meetings-calls-empty", |ui| {
+        *ui = mac_fixture();
+        ui.meetings.view = meetings::View::Settings;
+        ui.pane = Pane::Meetings;
+        ui.settings.meetings.providers.clear();
+        calls::fixture(ui, Vec::new(), CALLS_NOW_MS, true);
     }),
     // Summaries' picker open: Off, On this Mac, OpenCode, each saying what
     // it does; then with Apple Intelligence off, On this Mac kept, disabled,
@@ -673,6 +742,14 @@ pub(super) const SCENES: &[Scene] = &[
             view.screen_needs_restart = true;
         })
     }),
+    // Labs › Install agent skill from Annotate: every agent state, the
+    // copyable skills command, and the Command-line tool.
+    #[cfg(hex_capture)]
+    ("mac-scrawl-agents", |ui| {
+        scrawl_fixture(ui, true, |_| {});
+        ui.settings.labs.annotate_agent_install = true;
+        ui.agents = scrawl::Agents::fixture();
+    }),
     ("mac-voice-filter", |ui| {
         *ui = mac_fixture();
         ui.pane = Pane::VoiceFilter;
@@ -682,7 +759,9 @@ pub(super) const SCENES: &[Scene] = &[
         ui.platform.tuning.mode = crate::audio::voice_filter::VoiceFilterMode::Muted;
         ui.platform.demo = Some(fun::preview_demo(
             false,
-            Some(crate::audio::hex_microphone::DemoPlaybackTrack::CallHears),
+            Some(crate::audio::hex_microphone::DemoPlaybackTrack::Effect(
+                crate::audio::voice_filter::VoiceFilterMode::Robot,
+            )),
         ));
         ui.pane = Pane::VoiceFilter;
     }),
@@ -691,10 +770,14 @@ pub(super) const SCENES: &[Scene] = &[
         if let Some(driver) = &mut ui.platform.hex_microphone {
             driver.driver_bundle_installed = false;
             driver.driver_loaded = false;
+            driver.mic_in_use = false;
+            driver.sink_streaming = false;
             driver.installed_version = None;
             driver.active_apps.clear();
         }
-        ui.platform.demo = Some(fun::preview_demo(true, None));
+        if let Some(demo) = &mut ui.platform.demo {
+            demo.has_recording = false;
+        }
         ui.pane = Pane::VoiceFilter;
     }),
     ("voice-filter", |ui| {
@@ -723,11 +806,11 @@ pub(super) const SCENES: &[Scene] = &[
         ui.pane = Pane::HudLab;
     }),
     ("mac-labs", labs_with_some_on),
-    // Where hex://labs/vocabulary-biasing lands: its group's chip.
+    // Where hex://labs/live-text lands: its group's chip.
     ("mac-labs-link", |ui| {
         *ui = mac_fixture();
         ui.labs_open = true;
-        ui.lab_store.group = Some(crate::labs::Feature::VocabularyBiasing.group());
+        ui.lab_store.group = Some(crate::labs::Feature::LiveText.group());
     }),
     ("mac-labs-on", |ui| {
         labs_with_some_on(ui);
@@ -760,7 +843,7 @@ pub(super) const SCENES: &[Scene] = &[
         ui.settings.labs.yolo_mode = true;
         ui.settings.labs.yolo_mode_apps = vec!["Messages".into(), "Slack".into()];
         crate::labs::apply(&ui.settings.labs);
-        ui.lab_store.group = Some(crate::labs::Feature::YoloMode.group());
+        ui.lab_store.search = rune::TextEdit::new("YOLO".to_owned());
     }),
     // The same card with its Only in picker open over the cards below.
     ("mac-labs-yolo-mode-picker", |ui| {
@@ -772,6 +855,28 @@ pub(super) const SCENES: &[Scene] = &[
         modes::fixture_catalog(ui);
         ui.modes.picker_target = modes::PickerTarget::YoloMode;
         ui.modes.application_picker_open = true;
+    }),
+    // Labs › Transcribe dropped audio: a file Hex reads held over the window,
+    // and one file at 42% with two behind it.
+    ("drop-hover", |ui| {
+        *ui = portal_fixture();
+        ui.settings.labs.drop_transcribe = true;
+        crate::labs::apply(&ui.settings.labs);
+        ui.drop =
+            drop_transcribe::DropTranscribe::fixture_dragging(drop_transcribe::Drag::Accepted);
+    }),
+    ("drop-running", |ui| {
+        *ui = portal_fixture();
+        ui.settings.labs.drop_transcribe = true;
+        crate::labs::apply(&ui.settings.labs);
+        ui.drop = drop_transcribe::DropTranscribe::fixture_running();
+    }),
+    // Its own card while on: the button that opens the file dialog, for the
+    // desktops that report no file drags.
+    ("mac-labs-drop-transcribe", |ui| {
+        labs_with_some_on(ui);
+        ui.settings.labs.drop_transcribe = true;
+        ui.lab_store.group = Some(crate::labs::Feature::DropTranscribe.group());
     }),
     // Labs on Windows and Linux: only their OS's labs, groups holding a
     // lab that's on open.
@@ -873,6 +978,54 @@ fn scrawl_fixture(ui: &mut Ui, enabled: bool, adjust: fn(&mut platform::ScrawlVi
     adjust(&mut view);
     ui.platform.scrawl = Some(view);
     ui.pane = Pane::Annotate;
+}
+
+/// Labs › Paste Last picker (macOS): the mixed History over fixture
+/// dictations and captures, as the pane draws it.
+#[cfg(all(target_os = "macos", hex_capture))]
+fn unified_history(ui: &mut Ui) {
+    *ui = mac_fixture();
+    ui.settings.capture.enabled = true;
+    ui.settings.labs.screenshots = true;
+    ui.settings.labs.paste_last_picker = true;
+    ui.history = history::HistoryPane::fixture();
+    ui.history.unified.enabled = true;
+    ui.history.reload(ui.settings.labs.history_stats);
+    ui.captures = captures::CapturesPane::fixture();
+    ui.pane = Pane::History;
+}
+
+/// Saturday, 21 November 2026, 12:00 UTC: the Calls fixtures' now.
+const CALLS_NOW_MS: i64 = 1_795_262_400_000;
+
+/// Calls Hex saw: Slack and Zoom with their catalog icons, Google Meet's
+/// website, and one other website.
+fn calls_fixture(ui: &mut Ui, open: bool) {
+    use crate::meeting::seen_calls::SeenCall;
+    let hour = 60 * 60 * 1000;
+    let seen = |key: &str, label: &str, application: Option<&str>, ago: i64| SeenCall {
+        key: key.into(),
+        label: label.into(),
+        application: application.map(Into::into),
+        last_seen_ms: CALLS_NOW_MS - ago * hour,
+    };
+    modes::fixture_call_catalog(ui);
+    calls::fixture(
+        ui,
+        vec![
+            seen(
+                "com.tinyspeck.slackmacgap",
+                "Slack huddles",
+                Some("com.tinyspeck.slackmacgap"),
+                2,
+            ),
+            seen("us.zoom.xos", "Zoom", Some("us.zoom.xos"), 26),
+            seen("meet.google.com", "Google Meet", None, 50),
+            seen("calls.example.org", "calls.example.org", None, 24 * 9),
+        ],
+        CALLS_NOW_MS,
+        open,
+    );
 }
 
 pub(super) fn mac_fixture() -> Ui {
@@ -996,6 +1149,7 @@ pub(super) fn fixture(shortcuts: DesktopShortcuts) -> Ui {
             preparation_stage: None,
             selection: ui.settings.transcription.clone(),
             preparing: None,
+            backend: None,
         },
         update_status: DesktopUpdateStatus::Current,
         update_notes: None,

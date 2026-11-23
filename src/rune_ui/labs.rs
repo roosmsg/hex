@@ -3,26 +3,31 @@
 //! every lab as a card under its group's collapsible header, and Turned on
 //! what's on. Each card shows its description and switch, and while on any
 //! settings the lab has of its own. A feature with its own pane (Meetings,
-//! Voice Filter, Playground) joins the main sidebar while on and is hidden
-//! while off.
+//! Voice Filter, Playground, Modes editor) joins the main sidebar while on
+//! and is hidden while off.
 
-mod browser_access;
 mod endpoint;
 mod group;
+#[cfg(target_os = "macos")]
+mod hud_height;
 #[cfg(all(target_os = "macos", hex_capture))]
 pub(super) mod screenshots;
+mod signature;
+mod stop_phrase;
 mod store;
 mod voice_prompt;
 mod yolo_mode;
+
+use std::borrow::Cow;
 
 use rune::{El, Icon, TextEdit, Tx, row, text};
 
 pub(super) use self::store::{page, search_field, tabs};
 use super::controls::{self, Paint};
 use super::icons::{
-    BOOK, CAMERA, CLOCK, FOLDER, GLOBE, KEYBOARD, MOUSE, PANEL, SPARKLES, TERMINAL, TIMER, WAVE,
+    BOOK, CALENDAR, CAMERA, CLOCK, FOLDER, GLOBE, KEYBOARD, MIC, MOUSE, PANEL, SPARKLES, TERMINAL,
+    TIMER, WAVE,
 };
-use super::list_detail::SEARCH_ICON;
 use super::sidebar::{NAV_ROW_GAP, NAV_ROW_HEIGHT, VOICE_FILTER_ICON};
 use super::{Pane, Ui};
 use crate::desktop::i18n::{tr, tr_fill, tr_named};
@@ -34,11 +39,15 @@ pub(super) static LABS_ICON: Icon = Icon {
     body: r#"<path d="M6.25 2.5h3.5M6.75 2.5v4L3.2 12.3a.8.8 0 0 0 .7 1.2h8.2a.8.8 0 0 0 .7-1.2L9.25 6.5v-4M4.8 10h6.4" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/>"#,
 };
 
-/// The main sidebar's panes, in order: General, Output, History, then the
-/// features turned on (Meetings and Voice Filter from Labs, Annotate in dev
-/// builds).
+/// The main sidebar's panes, in order: General, Output, the Modes editor
+/// while its lab is on, History, then the features turned on (Meetings and
+/// Voice Filter from Labs, Annotate in dev builds).
 pub(super) fn main_panes(ui: &Ui) -> Vec<Pane> {
-    let mut panes = vec![Pane::General, Pane::Output, Pane::History];
+    let mut panes = vec![Pane::General, Pane::Output];
+    if Pane::Modes.shown(ui) {
+        panes.push(Pane::Modes);
+    }
+    panes.push(Pane::History);
     #[cfg(hex_capture)]
     let optional = [
         Pane::Captures,
@@ -210,16 +219,25 @@ pub(super) struct Store {
     pub(super) tab: Tab,
     /// The chip selected: only this group's labs show.
     pub(super) group: Option<Group>,
-    /// Labs › Voice prompt's phrase while it's on: a draft, so invalid words
+    /// Labs › Rewrite by voice's phrase while it's on: a draft, so invalid words
     /// stay in its field instead of replacing the saved phrase.
     pub(super) phrase: TextEdit,
     /// Whether `phrase` started from the saved phrase.
     pub(super) phrase_synced: bool,
-    /// Labs › Browser access to the local API's origins while it's on: a
-    /// draft, saved as the comma-separated field shows it.
-    pub(super) origins: TextEdit,
-    /// Whether `origins` started from the saved origins.
-    pub(super) origins_synced: bool,
+    /// Labs › Stop phrase's phrase while it's on: a draft, so invalid words
+    /// stay in its field instead of replacing the saved phrase.
+    pub(super) stop_phrase: TextEdit,
+    /// Whether `stop_phrase` started from the saved phrase.
+    pub(super) stop_phrase_synced: bool,
+    /// Labs › Signature's line while it's on: a draft, so invalid text stays
+    /// in its field instead of replacing the saved signature.
+    pub(super) signature: TextEdit,
+    /// Whether `signature` started from the saved line.
+    pub(super) signature_synced: bool,
+    /// Labs › HUD height's slider while it drags: the point gap shown
+    /// before release saves it.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub(super) hud_gap: Option<u16>,
     /// The lab a `hex://labs/<feature>` link named and when, so its card
     /// shows a focus border for [`FLASH`].
     pub(super) flash: Option<(&'static str, std::time::Instant)>,
@@ -275,52 +293,118 @@ impl Store {
         !draft.is_empty() && draft != settings.labs.voice_prompt_phrase
     }
 
-    /// Starts the origins field at the saved origins, normalized.
-    pub(super) fn sync_origins(&mut self, saved: &[String]) {
-        self.origins = TextEdit::new(origins_text(saved));
-        self.origins_synced = true;
+    /// Starts Stop phrase's field at `saved` when Labs opens or its lab turns
+    /// on.
+    pub(super) fn sync_stop_phrase(&mut self, saved: &str) {
+        self.stop_phrase = TextEdit::new(saved.to_owned());
+        self.stop_phrase_synced = true;
     }
 
-    /// Adopts origins another writer saved, unless the field holds an unsaved
-    /// draft. The field's own save passes the same list on both sides and
-    /// leaves the text (and its caret) as typed.
-    pub(super) fn rebase_origins(&mut self, before: &[String], after: &[String]) {
-        let before = crate::app_settings::normalize_browser_origins(before);
-        let after = crate::app_settings::normalize_browser_origins(after);
-        if before == after {
-            return;
-        }
-        let draft = crate::app_settings::parse_browser_origins(&self.origins.text);
-        if !self.origins_synced || draft == before {
-            self.sync_origins(&after);
+    /// Adopts a phrase another writer saved, unless the field holds an
+    /// unsaved draft.
+    pub(super) fn rebase_stop_phrase(&mut self, before: &str, after: &str) {
+        if !self.stop_phrase_synced || self.stop_phrase.text.trim() == before {
+            self.sync_stop_phrase(after);
         }
     }
 
-    /// The origins `settings` should hold: the field's entries, ignoring
-    /// anything that isn't an `http://` or `https://` origin. A lab that's
-    /// off, or a field this window never opened, leaves its saved list alone.
-    pub(super) fn project_origins(&self, settings: &mut crate::app_settings::AppSettings) {
-        if !settings.labs.api_browser_access || !self.origins_synced {
-            return;
+    /// The phrase Stop phrase's `settings` should hold: the draft when it
+    /// passes validation. An invalid draft never replaces the saved phrase.
+    pub(super) fn project_stop_phrase(&self, settings: &mut crate::app_settings::AppSettings) {
+        let draft = self.stop_phrase.text.trim();
+        if crate::dictation::voice_prompt::phrase_problem(draft).is_none() {
+            settings.labs.stop_phrase_text = draft.to_owned();
         }
-        settings.labs.api_browser_origins =
-            crate::app_settings::parse_browser_origins(&self.origins.text);
     }
 
-    /// Whether the origins field holds typing the saved origins don't have.
-    /// A lab that's off, or a field this window never opened, has no draft.
-    pub(super) fn origins_dirty(&self, settings: &crate::app_settings::AppSettings) -> bool {
-        if !settings.labs.api_browser_access || !self.origins_synced {
+    /// Whether Stop phrase's field holds typing the saved settings don't
+    /// have. A lab that's off has no draft to keep.
+    pub(super) fn stop_phrase_dirty(&self, settings: &crate::app_settings::AppSettings) -> bool {
+        if !settings.labs.stop_phrase {
             return false;
         }
-        crate::app_settings::parse_browser_origins(&self.origins.text)
-            != crate::app_settings::normalize_browser_origins(&settings.labs.api_browser_origins)
+        let draft = self.stop_phrase.text.trim();
+        !draft.is_empty() && draft != settings.labs.stop_phrase_text
     }
-}
 
-/// The saved origins as the card's comma-separated field shows them.
-fn origins_text(origins: &[String]) -> String {
-    crate::app_settings::normalize_browser_origins(origins).join(", ")
+    /// Starts Signature's field at `saved` when Labs opens or its lab turns
+    /// on.
+    pub(super) fn sync_signature(&mut self, saved: &str) {
+        self.signature = TextEdit::new(saved.to_owned());
+        self.signature_synced = true;
+    }
+
+    /// Adopts a signature another writer saved, unless the field holds an
+    /// unsaved draft.
+    pub(super) fn rebase_signature(&mut self, before: &str, after: &str) {
+        if !self.signature_synced || self.signature.text.trim() == before {
+            self.sync_signature(after);
+        }
+    }
+
+    /// The signature `settings` should hold: the draft when it passes
+    /// validation. An invalid draft never replaces the saved line, and an
+    /// empty one saves and appends nothing.
+    pub(super) fn project_signature(&self, settings: &mut crate::app_settings::AppSettings) {
+        // Until the field starts from the saved line, it holds no draft.
+        if !self.signature_synced {
+            return;
+        }
+        let draft = self.signature.text.trim();
+        if crate::dictation::signature::text_problem(draft).is_none() {
+            settings.labs.signature_text = draft.to_owned();
+        }
+    }
+
+    /// Whether Signature's field holds typing the saved settings don't have.
+    /// A lab that's off, or a field that never started from the saved line,
+    /// has no draft to keep.
+    pub(super) fn signature_dirty(&self, settings: &crate::app_settings::AppSettings) -> bool {
+        if !self.signature_synced || !settings.labs.signature {
+            return false;
+        }
+        let draft = self.signature.text.trim();
+        draft != settings.labs.signature_text
+    }
+
+    /// Adopts the lab fields another write saved: a lab toggled elsewhere
+    /// resyncs its field, and a saved text change rebases one with no draft.
+    /// `drafts` is (phrase, stop phrase, signature).
+    pub(super) fn follow_saved(
+        &mut self,
+        before: &crate::app_settings::LabsSettings,
+        after: &crate::app_settings::LabsSettings,
+        drafts: (bool, bool, bool),
+    ) {
+        let (phrase, stop_phrase, signature) = drafts;
+        if after.voice_prompt != before.voice_prompt {
+            self.sync_phrase(&after.voice_prompt_phrase);
+        } else if !phrase && after.voice_prompt_phrase != before.voice_prompt_phrase {
+            self.rebase_phrase(&before.voice_prompt_phrase, &after.voice_prompt_phrase);
+        }
+        if after.stop_phrase != before.stop_phrase {
+            self.sync_stop_phrase(&after.stop_phrase_text);
+        } else if !stop_phrase && after.stop_phrase_text != before.stop_phrase_text {
+            self.rebase_stop_phrase(&before.stop_phrase_text, &after.stop_phrase_text);
+        }
+        if after.signature != before.signature {
+            self.sync_signature(&after.signature_text);
+        } else if !signature && after.signature_text != before.signature_text {
+            self.rebase_signature(&before.signature_text, &after.signature_text);
+        }
+    }
+
+    /// Adopts the lab texts a save committed, each unless its field holds a
+    /// draft.
+    pub(super) fn rebase_labs(
+        &mut self,
+        before: &crate::app_settings::LabsSettings,
+        after: &crate::app_settings::LabsSettings,
+    ) {
+        self.rebase_phrase(&before.voice_prompt_phrase, &after.voice_prompt_phrase);
+        self.rebase_stop_phrase(&before.stop_phrase_text, &after.stop_phrase_text);
+        self.rebase_signature(&before.signature_text, &after.signature_text);
+    }
 }
 
 /// What a `hex://labs` link asks the store to show.
@@ -388,7 +472,9 @@ fn open(ui: &mut Ui, tx: &mut Tx) {
     ui.lab_store
         .sync_phrase(&ui.settings.labs.voice_prompt_phrase);
     ui.lab_store
-        .sync_origins(&ui.settings.labs.api_browser_origins);
+        .sync_stop_phrase(&ui.settings.labs.stop_phrase_text);
+    ui.lab_store
+        .sync_signature(&ui.settings.labs.signature_text);
     tx.settle();
 }
 
@@ -402,7 +488,9 @@ struct Row {
     lab: Lab,
     icon: &'static Icon,
     title: &'static str,
-    about: &'static str,
+    /// The card's description: translated copy, or a translated template
+    /// filled with this build's audio formats.
+    about: Cow<'static, str>,
     /// A line computed from this computer's state, shown in addition to
     /// `about` (the Live text card naming the models that stream, or the Live
     /// typing card explaining this desktop has no input method it can use).
@@ -423,6 +511,46 @@ fn shown(ui: &Ui) -> Vec<Row> {
         .collect()
 }
 
+/// Every lab this build offers anyone: its audience is everyone, it shows on
+/// this OS, and nothing locks it, each with the icon its card draws. What's
+/// new lists its newest entries from this.
+pub(super) fn offered_labs(ui: &Ui) -> Vec<(Feature, &'static Icon)> {
+    shown(ui)
+        .into_iter()
+        .filter(|row| !row.locked)
+        .filter_map(|row| match row.lab {
+            Lab::Feature(feature) if feature.audience() == crate::labs::Audience::Everyone => {
+                Some((feature, row.icon))
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Search only the cards the current store can reveal. This also covers
+/// Annotate's build-specific card without inventing a second feature gate.
+fn find_cards(ui: &Ui) -> impl Iterator<Item = Row> {
+    shown(ui).into_iter().filter(|row| !row.locked)
+}
+
+pub(super) fn search_entries(
+    ui: &Ui,
+) -> impl Iterator<Item = (Lab, &'static str, Cow<'static, str>, &'static str)> {
+    find_cards(ui).map(|row| (row.lab, row.title, row.about, group::name(row.group)))
+}
+
+pub(super) fn reveal_card(ui: &mut Ui, lab: Lab, tx: &mut Tx) {
+    reveal(
+        ui,
+        &LabsLink {
+            lab: Some(lab.id().into()),
+            ..Default::default()
+        },
+        tx,
+    );
+    tx.focus(row_key(lab), true);
+}
+
 fn rows(ui: &Ui) -> Vec<Row> {
     let caps = ui.platform.caps;
     let settings = &ui.settings;
@@ -433,7 +561,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
             lab,
             icon: icon.unwrap_or_else(|| group::icon(group)),
             title: tr(feature.title()),
-            about: tr(feature.summary()),
+            about: tr(feature.summary()).into(),
             note: None,
             on: feature.on(settings),
             locked: false,
@@ -445,7 +573,7 @@ fn rows(ui: &Ui) -> Vec<Row> {
         Some(_) => Row {
             on: false,
             locked: true,
-            about: super::managed_note(),
+            about: super::managed_note().into(),
             ..row(feature, icon)
         },
         None => row(feature, icon),
@@ -463,9 +591,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
             on: super::fun::running(ui),
             locked,
             about: if locked {
-                tr("On while the Hex Microphone driver is installed. Uninstall the driver in Voice Filter to turn it off.")
+                tr("On while the Hex Microphone driver is installed. Uninstall the driver in Voice Filter to turn it off.").into()
             } else {
-                voice_filter.about
+                voice_filter.about.clone()
             },
             ..voice_filter
         });
@@ -476,7 +604,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
         note: live_text_note(ui),
         ..live_text
     });
+    rows.push(row(Feature::FasterLiveText, None));
     rows.push(row(Feature::FailureNotices, None));
+    rows.push(row(Feature::StopPhrase, None));
     if caps.os == super::platform::Os::Linux && ui.platform.wayland {
         let live_typing = row(Feature::LiveTyping, Some(&KEYBOARD));
         // An organization's lock and its note already say why the switch is
@@ -496,50 +626,37 @@ fn rows(ui: &Ui) -> Vec<Row> {
             });
         }
     }
-    rows.push(row(Feature::SettingsSearch, Some(SEARCH_ICON)));
     rows.push(row(Feature::Appearance, Some(&PANEL)));
-    rows.push(row(Feature::ReleaseNotesLink, None));
     if caps.meetings {
         rows.push(row(Feature::LiveChapters, None));
-        rows.push(row(Feature::SubtitleExport, None));
-        // macOS's meeting controller reads the call app's audio output, so
-        // Linux renders of macOS scenes leave it out.
-        if cfg!(target_os = "macos") {
-            rows.push(row(Feature::StopWhenCallEnds, Some(&TIMER)));
-            // Only macOS's capsules know the screen to snap a drag against.
-            rows.push(row(Feature::MovableMeetingCapsules, None));
-        }
-        rows.push(row(Feature::MeetingNotesVocabulary, Some(&BOOK)));
-        rows.push(row(Feature::MeetingDescriptiveFilenames, None));
-        rows.push(row(Feature::MeetingNotesFile, None));
-        rows.push(row(Feature::MeetingFinishedEvent, Some(&GLOBE)));
-        rows.push(row(Feature::FollowLiveTranscript, None));
-        rows.push(row(Feature::MoreCallApps, Some(&GLOBE)));
         // macOS's status item lists them, from the meeting controller's own
         // calendar read.
         if cfg!(target_os = "macos") {
             rows.push(row(Feature::CalendarMenu, Some(&CLOCK)));
+            // macOS's Meetings settings draw the Calendars row's bulk button.
+            rows.push(row(Feature::CalendarSelectAll, Some(&CALENDAR)));
         }
         if Feature::MeetingImport.on_this_os() {
             rows.push(row(Feature::MeetingImport, None));
         }
-        rows.push(row(Feature::ExpireMeetingAudio, Some(&CLOCK)));
     }
-    rows.push(row(Feature::VocabularyBiasing, Some(&BOOK)));
+    rows.push(row(Feature::VocabularyFiles, Some(&BOOK)));
     // macOS reads the focused window through Accessibility as a capture
     // becomes real.
     if caps.os == super::platform::Os::Macos {
         rows.push(row(Feature::ScreenVocabulary, Some(&BOOK)));
+        // macOS reads back the field a dictation pasted into.
+        rows.push(row(Feature::LearnFromCorrections, Some(&BOOK)));
     }
     if caps.keyboard_model_switching {
         rows.push(row(Feature::KeyboardModelSwitching, Some(&KEYBOARD)));
     }
-    if caps.app_model_switching {
-        rows.push(row(Feature::AppModelSwitching, Some(&KEYBOARD)));
-    }
     // Every OS's paster can leave a dictation on the clipboard; only macOS's
     // and Windows' can skip the paste.
     rows.push(row(Feature::KeepOnClipboard, None));
+    // Every OS's output stage signs a normal dictation at the one point its
+    // paste, History, and Paste Last read.
+    rows.push(row(Feature::Signature, None));
     // Every OS's paster can press Return after its paste.
     rows.push(row(Feature::YoloMode, None));
     if matches!(
@@ -552,11 +669,12 @@ fn rows(ui: &Ui) -> Vec<Row> {
     if caps.os == super::platform::Os::Macos {
         rows.push(row(Feature::ReturnToApp, Some(&PANEL)));
         // macOS's listener answers a printing start when its dictation ends.
-        rows.push(row(Feature::PrintStart, None));
     }
     // macOS's shortcut machine takes a shortcut without a key.
     if caps.os == super::platform::Os::Macos {
         rows.push(row(Feature::DoubleTapModifiers, Some(&KEYBOARD)));
+        // A held Option long enough keeps recording through a joining key.
+        rows.push(row(Feature::HoldThroughKeys, Some(&KEYBOARD)));
     }
     if caps.os == super::platform::Os::Macos {
         rows.push(row(Feature::MouseShortcuts, Some(&MOUSE)));
@@ -580,9 +698,10 @@ fn rows(ui: &Ui) -> Vec<Row> {
             // listener stays up.
             rows.push(row(Feature::PauseMenu, None));
             // macOS's app menu Quit Hex closes the window instead.
-            rows.push(row(Feature::QuitClosesWindow, None));
             // macOS's HUD reads the screen's notch from NSScreen.
             rows.push(row(Feature::NotchIndicator, Some(&WAVE)));
+            // macOS's HUD reads its bottom gap from the saved setting.
+            rows.push(row(Feature::HudHeight, Some(&PANEL)));
             // Hex's session tap takes the shortcut; ScreenCaptureKit shoots.
             #[cfg(hex_capture)]
             rows.push(row(Feature::Screenshots, Some(&CAMERA)));
@@ -594,12 +713,18 @@ fn rows(ui: &Ui) -> Vec<Row> {
         }
     }
     // The ISO section key, left of 1, may be a shortcut with no modifier
-    // (Labs › Section key alone, Linux and macOS).
+    // (Labs › § key alone, Linux and macOS).
     if matches!(
         caps.os,
         super::platform::Os::Linux | super::platform::Os::Macos
     ) {
         rows.push(row(Feature::SectionKeyAlone, Some(&KEYBOARD)));
+    }
+    // The microphone (dictation) key in a laptop keyboard's top row reports
+    // itself as Fn with key code 176, which macOS's recorder otherwise
+    // refuses (Labs › Microphone key alone, macOS).
+    if caps.os == super::platform::Os::Macos {
+        rows.push(row(Feature::MicrophoneKeyAlone, Some(&KEYBOARD)));
     }
     // Linux's X11 grabs and shortcuts portal take these keys alone.
     if caps.os == super::platform::Os::Linux {
@@ -610,6 +735,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
         rows.push(row(Feature::TypedText, Some(&KEYBOARD)));
         rows.push(row(Feature::GnomeMeetingCapsules, None));
         rows.push(row(Feature::GnomeAnnotate, None));
+        // Wayland's ScreenCast keeps one remembered screen; this one asks for
+        // the monitor under the pointer at each screen capture.
+        rows.push(row(Feature::AnnotatePointerScreen, None));
     }
     // Linux's and Windows' engines transcribe a whole clip on the CPU.
     if caps.os != super::platform::Os::Macos {
@@ -619,6 +747,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
     rows.push(row(Feature::SpokenFormatting, None));
     rows.push(row(Feature::SpokenSymbols, None));
     rows.push(row(Feature::FillerWords, None));
+    // Every OS writes each dictation in the chosen style after its
+    // corrections and before its transformations.
+    rows.push(row(Feature::DictationStyle, None));
     // macOS reads the pass through Apple Intelligence: a managed lock keeps
     // the row it built (off, disabled, saying why), else the card says why.
     if caps.os == super::platform::Os::Macos {
@@ -631,11 +762,28 @@ fn rows(ui: &Ui) -> Vec<Row> {
                 ..clean_up
             },
         });
+        // The same local model, in the modes that opt in, instead of the
+        // OpenCode rewrite.
+        let neutral = row(Feature::NeutralVoice, Some(&SPARKLES));
+        rows.push(match Feature::NeutralVoice.managed() {
+            Some(_) => neutral,
+            None => Row {
+                locked: !ui.platform.notes.is_available() && !neutral.on,
+                note: super::platform_settings::clean_up_note(ui.platform.notes),
+                ..neutral
+            },
+        });
     }
     rows.push(row(Feature::HistoryStats, None));
     rows.push(row(Feature::KeepRecordings, None));
-    rows.push(row(Feature::HistoryMultiSelect, None));
+    rows.push(row(Feature::CopyDictationAudio, None));
+    // The picker is a Mac gesture and History; elsewhere neither exists.
+    if caps.os == super::platform::Os::Macos {
+        rows.push(row(Feature::PasteLastPicker, None));
+    }
     rows.push(row(Feature::OutputFixes, Some(&BOOK)));
+    // The Modes editor's card carries its pane.
+    rows.push(row(Feature::ModesEditor, Some(Pane::Modes.icon())));
     rows.push(row(Feature::VoicePrompt, None));
     // macOS's Accessibility reads the text element's caret and nearby text.
     if caps.os == super::platform::Os::Macos {
@@ -649,7 +797,6 @@ fn rows(ui: &Ui) -> Vec<Row> {
     }
     rows.push(row(Feature::PickerSortFilter, None));
     rows.push(row(Feature::BenchmarkDetails, None));
-    rows.push(row(Feature::PickerActiveFirst, None));
     rows.push(row(Feature::ModelInPlace, None));
     // Metal has the K-quant kernels; the Vulkan builds embed shaders only for
     // the catalog's types.
@@ -657,12 +804,29 @@ fn rows(ui: &Ui) -> Vec<Row> {
         rows.push(row(Feature::KQuantModels, None));
     }
     rows.push(row(Feature::PickerDownloaded, None));
-    rows.push(row(Feature::ShellCompletions, None));
+    // The card names the kinds the drop target offers, unless an
+    // organization's lock already says why it can't be used.
+    let drop = row(Feature::DropTranscribe, Some(&WAVE));
+    rows.push(match Feature::DropTranscribe.managed() {
+        Some(_) => drop,
+        None => Row {
+            about: tr_fill(
+                "Drop a {} file on the Hex window to save its transcript as a text file next to it",
+                super::drop_transcribe::formats(),
+            )
+            .into(),
+            ..drop
+        },
+    });
     rows.push(row(Feature::ApiProcessing, None));
     rows.push(row(Feature::ApiTimestamps, None));
-    rows.push(row(Feature::ApiBrowserAccess, Some(&GLOBE)));
     rows.push(row(Feature::SpeakersOnly, None));
     rows.push(row(Feature::KeepMicrophoneOpen, Some(&TIMER)));
+    // macOS opens dictation's microphone through Apple's voice processing, so
+    // Control Center's Mic Mode can offer Voice Isolation.
+    if caps.os == super::platform::Os::Macos {
+        rows.push(row(Feature::VoiceIsolation, Some(&MIC)));
+    }
     let ultra_locked = Feature::ParakeetUltra.managed().is_none()
         && Feature::ParakeetUltra.off_refusal(&ui.settings).is_some();
     let ultra = row(Feature::ParakeetUltra, None);
@@ -672,7 +836,8 @@ fn rows(ui: &Ui) -> Vec<Row> {
     } else {
         Row {
             locked: true,
-            about: tr("On while it is the dictation model. Choose another model to turn it off."),
+            about: tr("On while it is the dictation model. Choose another model to turn it off.")
+                .into(),
             ..ultra
         }
     });
@@ -682,6 +847,9 @@ fn rows(ui: &Ui) -> Vec<Row> {
     if caps.os == super::platform::Os::Windows {
         rows.push(row(Feature::TerminalPaste, Some(&TERMINAL)));
         rows.push(row(Feature::OpenCodeInWsl, Some(&TERMINAL)));
+        // Windows's keyboard hook holds a modifier-only shortcut through a
+        // joining key.
+        rows.push(row(Feature::HoldThroughKeys, Some(&KEYBOARD)));
         rows.push(row(Feature::SendToEndpoint, Some(&GLOBE)));
     }
     // Another shortcut dictates exactly like the main one, on every OS (#627).
@@ -699,22 +867,52 @@ fn rows(ui: &Ui) -> Vec<Row> {
         rows.push(Row {
             locked,
             about: if locked {
-                super::managed_note()
+                super::managed_note().into()
             } else {
-                copy_zip.about
+                copy_zip.about.clone()
             },
             on: !locked && Feature::CopyCaptureZip.on(settings),
             ..copy_zip
         });
+        // `hex annotate inspect|zoom|frames|skill` for coding agents: the
+        // same engine and Annotate lock as the copy above.
+        let agent_locked = annotate_locked || Feature::AnnotateAgentTools.managed().is_some();
+        let agent_tools = row(Feature::AnnotateAgentTools, Some(&TERMINAL));
+        rows.push(Row {
+            locked: agent_locked,
+            about: if agent_locked {
+                super::managed_note().into()
+            } else {
+                agent_tools.about.clone()
+            },
+            on: !agent_locked && Feature::AnnotateAgentTools.on(settings),
+            ..agent_tools
+        });
+        // The Annotate pane's Agents section writes that skill into each
+        // coding agent's folder and links hex onto PATH (macOS).
+        let install_locked = annotate_locked || Feature::AnnotateAgentInstall.managed().is_some();
+        let agent_install = row(Feature::AnnotateAgentInstall, Some(&TERMINAL));
+        rows.push(Row {
+            locked: install_locked,
+            about: if install_locked {
+                super::managed_note().into()
+            } else {
+                agent_install.about.clone()
+            },
+            on: !install_locked && Feature::AnnotateAgentInstall.on(settings),
+            ..agent_install
+        });
+        // The dictation shortcut keeps working while a capture records.
+        rows.push(row(Feature::DictateWhileAnnotating, Some(&KEYBOARD)));
         let locked = annotate_locked;
         rows.push(Row {
             lab: Lab::Annotate,
             icon: Pane::Annotate.icon(),
             title: tr("Annotate"),
             about: if locked {
-                super::managed_note()
+                super::managed_note().into()
             } else {
-                tr("Record your screen, draw on it, and talk over it with a shortcut")
+                tr("Record your screen, draw on it, and talk over it with a shortcut").into()
             },
             note: None,
             on: !locked && ui.settings.capture.enabled,
@@ -785,14 +983,14 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::VoiceFilter => "lab-voice-filter",
         Feature::Playground => "lab-playground",
         Feature::LiveText => "lab-live-text",
+        Feature::FasterLiveText => "lab-faster-live-text",
         Feature::FailureNotices => "lab-failure-notices",
         Feature::LiveTyping => "lab-live-typing",
         Feature::LiveChapters => "lab-live-chapters",
-        Feature::VocabularyBiasing => "lab-vocabulary-biasing",
         Feature::ScreenVocabulary => "lab-screen-vocabulary",
+        Feature::LearnFromCorrections => "lab-learn-from-corrections",
         Feature::TerminalPaste => "lab-terminal-paste",
         Feature::KeyboardModelSwitching => "lab-keyboard-model-switching",
-        Feature::AppModelSwitching => "lab-app-model-switching",
         Feature::MouseShortcuts => "lab-mouse-shortcuts",
         Feature::PauseBrowser => "lab-pause-browser",
         Feature::ShareShortcut => "lab-share-shortcut",
@@ -803,7 +1001,7 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::SpokenFormatting => "lab-spoken-formatting",
         Feature::FillerWords => "lab-filler-words",
         Feature::CleanUpWithAppleIntelligence => "lab-clean-up",
-        Feature::SubtitleExport => "lab-subtitle-export",
+        Feature::NeutralVoice => "lab-neutral-voice",
         Feature::SecondDictationShortcut => "lab-second-dictation-shortcut",
         Feature::MoreDictationShortcuts => "lab-more-dictation-shortcuts",
         Feature::TerminalPasteShortcut => "lab-terminal-paste-shortcut",
@@ -819,51 +1017,51 @@ fn row_key(lab: Lab) -> &'static str {
         Feature::HistoryStats => "lab-history-stats",
         Feature::RecentDictations => "lab-recent-dictations",
         Feature::SkipPauses => "lab-skip-pauses",
-        Feature::StopWhenCallEnds => "lab-stop-when-call-ends",
         Feature::OutputFixes => "lab-output-fixes",
-        Feature::PickerActiveFirst => "lab-picker-active-first",
         Feature::ModelInPlace => "lab-model-in-place",
         Feature::KQuantModels => "lab-k-quant-models",
         Feature::PickerDownloaded => "lab-picker-downloaded",
         Feature::SectionKeyAlone => "lab-section-key",
+        Feature::MicrophoneKeyAlone => "lab-microphone-key",
         Feature::KeepRecordings => "lab-keep-recordings",
-        Feature::HistoryMultiSelect => "lab-history-multi-select",
-        Feature::SettingsSearch => "lab-settings-search",
+        Feature::CopyDictationAudio => "lab-copy-dictation-audio",
+        Feature::PasteLastPicker => "lab-paste-last-picker",
         Feature::Appearance => "lab-appearance",
-        Feature::ReleaseNotesLink => "lab-release-notes-link",
         Feature::HideMenuBarIcon => "lab-hide-menu-bar-icon",
         Feature::PauseMenu => "lab-pause-menu",
         Feature::CalendarMenu => "lab-calendar-menu",
-        Feature::QuitClosesWindow => "lab-quit-closes-window",
+        Feature::CalendarSelectAll => "lab-calendar-select-all",
         Feature::CapsLockDictation => "lab-caps-lock-dictation",
-        Feature::MovableMeetingCapsules => "lab-movable-meeting-capsules",
         Feature::GnomeClipboardRestore => "lab-gnome-clipboard-restore",
         Feature::TypedText => "lab-typed-text",
-        Feature::MeetingNotesVocabulary => "lab-meeting-notes-vocabulary",
         Feature::NotchIndicator => "lab-notch-indicator",
-        Feature::MeetingFinishedEvent => "lab-meeting-finished-event",
         Feature::GnomeMeetingCapsules => "lab-gnome-meeting-capsules",
         Feature::GnomeAnnotate => "lab-gnome-annotate",
+        Feature::AnnotatePointerScreen => "lab-annotate-pointer-screen",
         Feature::Screenshots => "lab-screenshots",
-        Feature::FollowLiveTranscript => "lab-follow-live-transcript",
-        Feature::MoreCallApps => "lab-more-call-apps",
         Feature::AnnotateReplay => "lab-annotate-replay",
         Feature::CopyCaptureZip => "lab-copy-capture-zip",
+        Feature::AnnotateAgentTools => "lab-annotate-agent-tools",
+        Feature::AnnotateAgentInstall => "lab-annotate-agent-install",
+        Feature::DictateWhileAnnotating => "lab-dictate-while-annotating",
         Feature::MeetingImport => "lab-meeting-import",
-        Feature::MeetingDescriptiveFilenames => "lab-meeting-descriptive-filenames",
-        Feature::MeetingNotesFile => "lab-meeting-notes-file",
-        Feature::ExpireMeetingAudio => "lab-expire-meeting-audio",
         Feature::OpenCodeInWsl => "lab-opencode-in-wsl",
-        Feature::ShellCompletions => "lab-shell-completions",
         Feature::YoloMode => "lab-yolo-mode",
         Feature::ApiProcessing => "lab-api-processing",
         Feature::ApiTimestamps => "lab-api-timestamps",
-        Feature::ApiBrowserAccess => "lab-api-browser-access",
         Feature::SpeakersOnly => "lab-speakers-only",
         Feature::KeepMicrophoneOpen => "lab-keep-microphone-open",
-        Feature::PrintStart => "lab-print-start",
         Feature::VoicePrompt => "lab-voice-prompt",
         Feature::CursorContext => "lab-cursor-context",
+        Feature::StopPhrase => "lab-stop-phrase",
+        Feature::Signature => "lab-signature",
+        Feature::HudHeight => "lab-hud-height",
+        Feature::VoiceIsolation => "lab-voice-isolation",
+        Feature::HoldThroughKeys => "lab-hold-through-keys",
+        Feature::ModesEditor => "lab-modes-editor",
+        Feature::DropTranscribe => "lab-drop-transcribe",
+        Feature::VocabularyFiles => "lab-vocabulary-files",
+        Feature::DictationStyle => "lab-dictation-style",
         Feature::SendToEndpoint => "lab-send-to-endpoint",
     }
 }
@@ -896,13 +1094,10 @@ fn flip(ui: &mut Ui, lab: Lab) {
     ui.update(|settings| feature.set(settings, on));
     match feature {
         Feature::KeyboardModelSwitching => ui.open = None,
-        // Its selects live only in the Modes pane, and they close with it.
-        Feature::AppModelSwitching => ui.open = None,
         // The card's duration menu closes when its lab does.
         Feature::KeepMicrophoneOpen => ui.open = None,
-        // Its menu and application picker close with it.
+        // Its application picker closes with it.
         Feature::YoloMode => {
-            ui.open = None;
             if ui.modes.picker_target == super::modes::PickerTarget::YoloMode {
                 ui.modes.application_picker_open = false;
             }
@@ -913,10 +1108,17 @@ fn flip(ui: &mut Ui, lab: Lab) {
             let saved = ui.settings.labs.voice_prompt_phrase.clone();
             ui.lab_store.sync_phrase(&saved);
         }
-        // Its origins field starts at (and shows) the saved origins.
-        Feature::ApiBrowserAccess => {
-            let saved = ui.settings.labs.api_browser_origins.clone();
-            ui.lab_store.sync_origins(&saved);
+        // Its phrase field starts at the saved phrase, and an invalid draft
+        // leaves with its lab.
+        Feature::StopPhrase => {
+            let saved = ui.settings.labs.stop_phrase_text.clone();
+            ui.lab_store.sync_stop_phrase(&saved);
+        }
+        // Its line field starts at the saved signature, and an invalid draft
+        // leaves with its lab.
+        Feature::Signature => {
+            let saved = ui.settings.labs.signature_text.clone();
+            ui.lab_store.sync_signature(&saved);
         }
         // A notice already on screen leaves with its lab.
         Feature::FailureNotices if !on => crate::rune_ui::live_text::dismiss_failure(),
@@ -993,7 +1195,26 @@ fn extras(ui: &Ui, p: Paint, entry: &Row, layer: &mut Vec<El>) -> Option<El> {
                 .child(appearance_theme(ui, p)),
         ),
         Lab::Feature(Feature::VoicePrompt) => Some(voice_prompt::body(ui, p)),
-        Lab::Feature(Feature::ApiBrowserAccess) => Some(browser_access::body(ui, p)),
+        Lab::Feature(Feature::StopPhrase) => Some(stop_phrase::body(ui, p)),
+        Lab::Feature(Feature::Signature) => Some(signature::body(ui, p)),
+        #[cfg(target_os = "macos")]
+        Lab::Feature(Feature::HudHeight) => Some(hud_height::body(ui, p)),
+        Lab::Feature(Feature::DictationStyle) => Some(
+            row()
+                .key("dictation-style-row")
+                .gap(8.0)
+                .center_y()
+                .flex_wrap()
+                .child(
+                    text(tr("Style"))
+                        .key("label")
+                        .font(controls::DESCRIPTION)
+                        .color(p.muted()),
+                )
+                .child(dictation_style_choice(ui, p, layer)),
+        ),
+        // Wayland reports no file drags, so its card offers the file dialog.
+        Lab::Feature(Feature::DropTranscribe) => Some(super::drop_transcribe::card(p)),
         Lab::Feature(Feature::SendToEndpoint) => Some(endpoint::body(ui, p)),
         #[cfg(all(target_os = "macos", hex_capture))]
         Lab::Feature(Feature::Screenshots) => Some(screenshots::body(
@@ -1020,6 +1241,35 @@ fn caps_lock_light(ui: &Ui, p: Paint) -> El {
         let light = CapsLockLight::ALL[index];
         ui.update(|settings| settings.labs.caps_lock_light = light);
     })
+}
+
+/// Which of the four styles every dictation is written as. Four labels no
+/// longer fit a segmented control on a half-width card in every language,
+/// so the choice opens in a menu.
+fn dictation_style_choice(ui: &Ui, p: Paint, layer: &mut Vec<El>) -> El {
+    use crate::app_settings::DictationStyle;
+    let labels: Vec<String> = DictationStyle::ALL
+        .iter()
+        .map(|style| tr(style.name()).to_owned())
+        .collect();
+    let selected = DictationStyle::ALL
+        .iter()
+        .position(|style| *style == ui.settings.labs.dictation_style_choice)
+        .unwrap_or(0);
+    super::general::quiet_select(
+        ui,
+        p,
+        super::Menu::Pick("dictation-style"),
+        "dictation-style-choice".to_owned(),
+        tr("Style"),
+        labels,
+        selected,
+        |ui, index| {
+            let style = DictationStyle::ALL[index];
+            ui.update(|settings| settings.labs.dictation_style_choice = style);
+        },
+        layer,
+    )
 }
 
 /// Which appearance the main window shows instead of the system's.
