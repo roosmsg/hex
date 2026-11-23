@@ -4,8 +4,8 @@
 It adds a way for Hex to hand a dictation to another app on the same PC, such
 as [Restage](https://github.com/roosmsg/Restage), instead of only pasting it.
 
-- Up to date with `anomalyco/hex` branch `dev` at `82ca73f9` (15 November
-  2026, Hex 3.4.0).
+- Up to date with `anomalyco/hex` branch `dev` at `59ac93d6` (23 November
+  2026, after Hex 3.4.0).
 
 ## Branches
 
